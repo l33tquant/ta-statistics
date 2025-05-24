@@ -1,0 +1,27 @@
+[package]
+name = "ta-statistics"
+version = "0.1.0"
+edition = "2024"
+
+authors = ["Dhruv Soi<l33t.quant@gmail.com>"]
+description = "Rolling statistics for technical analysis in backtesting and live trading systems."
+license = "MIT"
+repository = "https://github.com/l33tquant/ta-statistics"
+documentation = "https://docs.rs/ta-statistics"
+readme = "README.md"
+keywords = [
+    "technical-analysis",
+    "backtesting",
+    "trading",
+    "algotrading",
+    "statistics",
+]
+categories = ["algorithms", "finance", "mathematics"]
+
+[dependencies.num-traits]
+version = "0.2"
+default-features = false
+features = ["libm"]
+
+[dev-dependencies.assert_approx_eq]
+version = "1.1"
