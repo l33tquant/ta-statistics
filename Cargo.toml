@@ -1,6 +1,6 @@
 [package]
 name = "ta-statistics"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 authors = ["Dhruv Soi<l33t.quant@gmail.com>"]
@@ -17,6 +17,9 @@ keywords = [
     "statistics",
 ]
 categories = ["algorithms", "finance", "mathematics"]
+
+[dependencies]
+compensated-summation = "0.3.1"
 
 [dependencies.num-traits]
 version = "0.2"

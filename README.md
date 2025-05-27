@@ -52,16 +52,16 @@ Replace `*` with the latest version number.
 For single statistics (like mean):
 
 ```rust
-use ta_statistics::{Statistics, SingleStatistics};
-let mut stats = Statistics::new(20);
+use ta_statistics::SingleStatistics;
+let mut stats = SingleStatistics::new(20);
 stats.next(105.43).mean();
 ```
 
 For paired statistics (like correlation):
 
 ```rust
-use ta_statistics::{Statistics, PairedStatistics};
-let mut stats = Statistics::new(20);
+use ta_statistics::PairedStatistics;
+let mut stats = PairedStatistics::new(20);
 stats.next((105.43, 23.67)).corr();
 ```
 
@@ -77,26 +77,22 @@ stats.next((105.43, 23.67)).corr();
 
 - Memory usage is proportional to the window size
 - Delta Degrees of Freedom correction can be applied with `set_ddof(true)` for sample statistics
+- Uses KahanBabuskaNeumaier algorithm for compensated summation to prevent catastrophic cancellation in floating-point operations, ensuring numerical stability in rolling calculations
 
 ## Example: Real-time Volatility Analysis
 
 ```rust
-use ta_statistics::{Statistics, SingleStatistics};
+use ta_statistics::SingleStatistics;
 
 /// Calculate normalized volatility and detect regime changes in live market data
 fn analyze_volatility_regime(
     price: f64, 
-    stats: &mut Statistics<f64>, 
+    stats: &mut SingleStatistics<f64>, 
     volatility_threshold: f64
 ) -> Option<VolatilityRegime> {
     // Update statistics with the latest price
     stats.next(price);
-    
-    // Skip if we don't have enough data points yet
-    if !stats.is_full() {
-        return None;
-    }
-    
+ 
     // Calculate current volatility metrics
     let std_dev = stats.stddev()?;
     let kurt = stats.kurt()?;
@@ -131,24 +127,19 @@ enum VolatilityRegime {
 ## Example: Correlation-Based Pair Monitoring
 
 ```rust
-use ta_statistics::{Statistics, PairedStatistics};
+use ta_statistics::PairedStatistics;
 
 /// Monitor correlation stability between two instruments in real-time
 /// and detect statistically significant relationship breakdowns
 fn monitor_pair_relationship(
     returns: (f64, f64),
-    stats: &mut Statistics<(f64, f64)>,
+    stats: &mut PairedStatistics<f64>,
     historical_corr: f64,
     z_threshold: f64,
 ) -> Option<PairStatus> {
     // Update statistics with latest paired returns
     stats.next(returns);
-    
-    // Skip if we don't have enough data yet
-    if !stats.is_full() {
-        return None;
-    }
-    
+     
     // Get current correlation and beta
     let current_corr = stats.corr()?;
     let current_beta = stats.beta()?;

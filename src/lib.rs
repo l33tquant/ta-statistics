@@ -18,11 +18,13 @@
 #[macro_use]
 extern crate alloc;
 
+pub(crate) type KBN<T> = compensated_summation::KahanBabuskaNeumaier<T>;
+
 mod utils;
 pub(crate) use utils::{Window, helper};
 
-mod traits;
-pub use traits::{PairedStatistics, SingleStatistics};
+mod single_statistics;
+pub use single_statistics::SingleStatistics;
 
-mod statistics;
-pub use statistics::Statistics;
+mod paired_statistics;
+pub use paired_statistics::PairedStatistics;

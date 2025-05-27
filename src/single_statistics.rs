@@ -1,18 +1,195 @@
-/// Single statistics trait for calculating statistics on a single value
+use num_traits::Float;
+
+use core::iter::Sum;
+
+use crate::{
+    KBN, PairedStatistics, Window,
+    helper::{median_from_sorted_slice, quantile_from_sorted_slice},
+};
+
+/// A structure that computes various statistics over a fixed-size window of values.
+/// A specialized statistics implementation for single time-series data analysis.
 ///
-/// This trait provides a foundation for calculating various statistics on a single value,
-/// such as mean, variance, standard deviation, and other measures of central tendency and
-/// dispersion. It is used as a base trait for more specific statistical calculations that
-/// examine relationships between variables.
-pub trait SingleStatistics<T> {
+/// This structure provides comprehensive statistical calculations for financial
+/// time-series data, optimized for algorithmic trading applications. It maintains
+/// a fixed-size window of values and efficiently updates statistics as new data
+/// points arrive in a streaming fashion.
+///
+/// The structure is particularly useful for technical analysis, risk management,
+/// and alpha generation in quantitative trading strategies.
+#[derive(Debug, Clone)]
+pub struct SingleStatistics<T> {
+    /// Statistics period
+    period: usize,
+    /// Fixed circular buffer
+    buf: Window<T>,
+    /// Fixed buffer for sorting on demand
+    sorted_buf: Window<T>,
+    /// Delta Degrees of Freedom
+    ddof: bool,
+    /// Latest updated value to statistics
+    value: Option<T>,
+    /// Previous value popped out the window, only available after full window
+    popped: Option<T>,
+    /// Sum of inputs
+    sum: KBN<T>,
+    /// Sum of squares
+    sum_sq: KBN<T>,
+    /// Sum of cubes
+    sum_cube: KBN<T>,
+    /// Sum of fourth powers
+    sum_quad: KBN<T>,
+    /// Current minimum value
+    min: Option<T>,
+    /// Current maximum value
+    max: Option<T>,
+    /// Maximum drawdown
+    max_drawdown: Option<T>,
+}
+
+impl<T> SingleStatistics<T>
+where
+    T: Default + Clone + Float,
+{
+    /// Creates a new `SingleStatistics` instance with the specified period.
+    ///
+    /// # Arguments
+    ///
+    /// * `period` - The period of the statistics
+    ///
+    /// # Returns
+    ///
+    /// * `Self` - The statistics object
+    pub fn new(period: usize) -> Self {
+        Self {
+            period,
+            buf: Window::new(period),
+            sorted_buf: Window::new(period),
+            ddof: false,
+            value: None,
+            popped: None,
+            sum: KBN::default(),
+            sum_sq: KBN::default(),
+            sum_cube: KBN::default(),
+            sum_quad: KBN::default(),
+            min: None,
+            max: None,
+            max_drawdown: None,
+        }
+    }
+
+    /// Returns the period of the statistics
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The period of the statistics
+    pub fn period(&self) -> usize {
+        self.period
+    }
+
+    /// Resets the statistics
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The statistics object
+    pub fn reset(&mut self) -> &mut Self {
+        self.buf.reset();
+        self.sorted_buf.reset();
+        self.ddof = false;
+        self.value = None;
+        self.popped = None;
+        self.sum = KBN::default();
+        self.sum_sq = KBN::default();
+        self.sum_cube = KBN::default();
+        self.sum_quad = KBN::default();
+        self.min = None;
+        self.max = None;
+        self.max_drawdown = None;
+        self
+    }
+
+    fn period_t(&self) -> Option<T>
+    where
+        T: Float,
+    {
+        T::from(self.period)
+    }
+
+    // Copies and sorts the buf
+    fn sorted_buf(&mut self) -> &[T]
+    where
+        T: Copy + Default + PartialOrd,
+    {
+        self.sorted_buf.copy_from_slice(self.buf.as_slice());
+        self.sorted_buf.sort()
+    }
+
+    /// Returns the Delta Degrees of Freedom
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - The Delta Degrees of Freedom
+    pub const fn ddof(&self) -> bool {
+        self.ddof
+    }
+
+    /// Sets the Delta Degrees of Freedom
+    ///
+    /// # Arguments
+    ///
+    /// * `ddof` - The Delta Degrees of Freedom
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The statistics object
+    pub const fn set_ddof(&mut self, ddof: bool) -> &mut Self {
+        self.ddof = ddof;
+        self
+    }
+
     /// Updates the statistical calculations with a new value in the time series
     ///
     /// Incorporates a new data point into the rolling window, maintaining the specified
     /// window size by removing the oldest value when necessary. This is the core method
     /// that should be called whenever new data is available for processing.
-    fn next(&mut self, value: T) -> &mut Self
-    where
-        Self: Sized;
+    ///
+    /// The statistics are calculated using the Kahan-Babuška-Neumaier (KBN) algorithm
+    /// for numerically stable summation. This compensated summation technique minimizes
+    /// floating-point errors that would otherwise accumulate in long-running calculations,
+    /// particularly important for financial time-series analysis where precision is critical.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The new value to be added to the time series
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The statistics object
+    pub fn next(&mut self, value: T) -> &mut Self {
+        let popped = self.buf.next(value);
+        self.value = Some(value);
+
+        if self.buf.is_full() {
+            self.popped = match self.popped {
+                None => (self.buf.index() > 0).then_some(popped),
+                _ => Some(popped),
+            };
+            if self.popped.is_some() {
+                self.sum -= popped;
+                self.sum_sq -= popped * popped;
+                self.sum_cube -= popped * popped * popped;
+                self.sum_quad -= popped * popped * popped * popped;
+            }
+        }
+
+        self.sum += value;
+        self.sum_sq += value * value;
+        self.sum_cube += value * value * value;
+        self.sum_quad += value * value * value * value;
+
+        self
+    }
+
     /// Returns the sum of all values in the rolling window
     ///
     /// This fundamental calculation serves as the basis for numerous higher-order statistics
@@ -30,19 +207,21 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
-    /// let mut stats = Statistics::new(3);
-    /// let inputs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    /// # use ta_statistics::SingleStatistics;
+    /// let mut stats = SingleStatistics::new(3);
+    /// let inputs = [1_000_000.1, 1_000_000.2, 1_000_000.3, 1_000_000.4, 1_000_000.5, 1_000_000.6, 1_000_000.7];
     /// let mut results = vec![];
     ///
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).sum().map(|v| results.push(v));
     /// });
     ///
-    /// let expected = [6.0, 9.0, 12.0, 15.0];
+    /// let expected = [3000000.6, 3000000.9, 3000001.2, 3000001.5, 3000001.8];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn sum(&self) -> Option<T>;
+    pub fn sum(&self) -> Option<T> {
+        self.buf.is_full().then_some(self.sum.total())
+    }
 
     /// Returns the sum of squares of all values in the rolling window
     ///
@@ -61,19 +240,20 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
-    /// let mut stats = Statistics::new(3);
-    /// let inputs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    /// # use ta_statistics::SingleStatistics;
+    /// let mut stats = SingleStatistics::new(3);
+    /// let inputs = [1_000_000.1, 1_000_000.2, 1_000_000.3, 1_000_000.4, 1_000_000.5, 1_000_000.6, 1_000_000.7];
     /// let mut results = vec![];
     ///
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).sum_sq().map(|v| results.push(v));
     /// });
-    ///
-    /// let expected = [14.0, 29.0, 50.0, 77.0];
+    /// let expected = [3000001200000.14, 3000001800000.29, 3000002400000.5, 3000003000000.77, 3000003600001.0996];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn sum_sq(&self) -> Option<T>;
+    pub fn sum_sq(&self) -> Option<T> {
+        self.buf.is_full().then_some(self.sum_sq.total())
+    }
 
     /// Returns the arithmetic mean of all values in the rolling window
     ///
@@ -92,19 +272,25 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
-    /// let mut stats = Statistics::new(3);
-    /// let inputs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    /// # use ta_statistics::SingleStatistics;
+    /// # use assert_approx_eq::assert_approx_eq;
+    /// let mut stats = SingleStatistics::new(3);
+    /// let inputs = [1_000_000.1, 1_000_000.2, 1_000_000.3, 1_000_000.4, 1_000_000.5, 1_000_000.6, 1_000_000.7];
     /// let mut results = vec![];
     ///
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).mean().map(|v| results.push(v));
     /// });
     ///
-    /// let expected = [2.0, 3.0, 4.0, 5.0];
-    /// assert_eq!(&results, &expected);
+    /// let expected: [f64; 5] = [1000000.2, 1000000.3, 1000000.4, 1000000.5, 1000000.6];
+    /// for (i, e) in expected.iter().enumerate() {
+    ///     assert_approx_eq!(e, results[i], 0.0001);
+    /// }
     /// ```
-    fn mean(&self) -> Option<T>;
+    pub fn mean(&self) -> Option<T> {
+        self.sum().zip(self.period_t()).map(|(sum, n)| sum / n)
+    }
+
     /// Returns the mean of squares of all values in the rolling window
     ///
     /// This calculation provides the average of squared values in the series, offering
@@ -122,22 +308,27 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
-    /// let inputs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    /// let mut stats = SingleStatistics::new(3);
+    /// let inputs = [1_000_000.1, 1_000_000.2, 1_000_000.3, 1_000_000.4, 1_000_000.5, 1_000_000.6, 1_000_000.7];
     /// let mut results = vec![];
     ///
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).mean_sq().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 4] = [4.66, 9.66, 16.66, 25.66];
+    /// let expected: [f64; 5] = [1000000400000.05,1000000600000.1,1000000800000.17,1000001000000.26,1000001200000.37];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.01);
     /// }
     /// ```
-    fn mean_sq(&self) -> Option<T>;
+    pub fn mean_sq(&self) -> Option<T> {
+        self.sum_sq()
+            .zip(self.period_t())
+            .map(|(sum_sq, n)| sum_sq / n)
+    }
+
     /// Returns the mode (most frequently occurring value) in the rolling window
     ///
     /// The mode identifies the most common value within a distribution, providing
@@ -155,9 +346,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let inputs = [1.0, 2.0, 1.0, 2.0, 3.0, 3.0, 3.0, 2.0, 2.0, 1.0];
     /// let mut results = vec![];
     ///
@@ -168,7 +359,39 @@ pub trait SingleStatistics<T> {
     /// let expected: [f64; 8] = [1.0, 2.0, 1.0, 3.0, 3.0, 3.0, 2.0, 2.0];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn mode(&mut self) -> Option<T>;
+    pub fn mode(&mut self) -> Option<T> {
+        if !self.buf.is_full() {
+            return None;
+        }
+
+        let slice = self.sorted_buf();
+
+        let mut mode = slice[0];
+        let mut mode_count = 1;
+
+        let mut current = slice[0];
+        let mut current_count = 1;
+
+        for &value in &slice[1..] {
+            if value == current {
+                current_count += 1;
+            } else {
+                if current_count > mode_count || (current_count == mode_count && current < mode) {
+                    mode = current;
+                    mode_count = current_count;
+                }
+                current = value;
+                current_count = 1;
+            }
+        }
+
+        if current_count > mode_count || (current_count == mode_count && current < mode) {
+            mode = current;
+        }
+
+        Some(mode)
+    }
+
     /// Returns the median (middle value) of the rolling window
     ///
     /// The median represents the central value when data is sorted, providing a robust
@@ -186,9 +409,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let inputs = [5.0, 2.0, 8.0, 1.0, 7.0, 3.0, 9.0];
     /// let mut results = vec![];
     ///
@@ -199,7 +422,12 @@ pub trait SingleStatistics<T> {
     /// let expected: [f64; 5] = [5.0, 2.0, 7.0, 3.0, 7.0];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn median(&mut self) -> Option<T>;
+    pub fn median(&mut self) -> Option<T> {
+        self.buf
+            .is_full()
+            .then_some(median_from_sorted_slice(self.sorted_buf()))
+    }
+
     /// Returns the minimum value in the rolling window
     ///
     /// The minimum value represents the lower bound of a data series over the observation
@@ -217,9 +445,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// let mut results = vec![];
     ///
@@ -230,7 +458,26 @@ pub trait SingleStatistics<T> {
     /// let expected: [f64; 7] = [25.4, 26.0, 25.8, 25.8, 25.8, 25.9, 26.2];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn min(&mut self) -> Option<T>;
+    pub fn min(&mut self) -> Option<T> {
+        if !self.buf.is_full() {
+            return None;
+        }
+
+        self.min = match self.min {
+            None => self.buf.min(),
+            Some(min) => {
+                if self.popped == Some(min) {
+                    self.buf.min()
+                } else if self.value < Some(min) {
+                    self.value
+                } else {
+                    Some(min)
+                }
+            }
+        };
+        self.min
+    }
+
     /// Returns the maximum value in the rolling window
     ///
     /// The maximum value identifies the upper bound of a data series over the observation
@@ -248,9 +495,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// let mut results = vec![];
     ///
@@ -261,7 +508,27 @@ pub trait SingleStatistics<T> {
     /// let expected: [f64; 7] = [26.2, 26.2, 26.1, 26.1, 26.3, 26.3, 26.5];
     /// assert_eq!(&results, &expected);
     /// ```
-    fn max(&mut self) -> Option<T>;
+    pub fn max(&mut self) -> Option<T> {
+        if !self.buf.is_full() {
+            return None;
+        }
+
+        self.max = match self.max {
+            None => self.buf.max(),
+            Some(max) => {
+                if self.popped == Some(max) {
+                    self.buf.max()
+                } else if self.value > Some(max) {
+                    self.value
+                } else {
+                    Some(max)
+                }
+            }
+        };
+
+        self.max
+    }
+
     /// Returns the mean absolute deviation of values in the rolling window
     ///
     /// This robust dispersion measure calculates the average absolute difference from the mean,
@@ -279,9 +546,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [2.0, 4.0, 6.0, 8.0, 10.0];
     /// inputs.iter().for_each(|i| {
@@ -294,7 +561,15 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn mean_absolute_deviation(&self) -> Option<T>;
+    pub fn mean_absolute_deviation(&self) -> Option<T>
+    where
+        T: Sum,
+    {
+        let mean = self.mean()?;
+        let abs_sum = self.buf.iter().map(|&x| (x - mean).abs()).sum::<T>();
+        self.period_t().map(|n| abs_sum / n)
+    }
+
     /// Returns the median absolute deviation of values in the rolling window
     ///
     /// This exceptionally robust dispersion measure calculates the median of absolute differences
@@ -312,9 +587,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [5.0, 2.0, 8.0, 1.0, 7.0, 3.0, 9.0];
     /// inputs.iter().for_each(|i| {
@@ -326,8 +601,18 @@ pub trait SingleStatistics<T> {
     ///     assert_approx_eq!(e, results[i], 0.1);
     /// }
     ///
-    /// ```
-    fn median_absolute_deviation(&mut self) -> Option<T>;
+    /// ```    
+    pub fn median_absolute_deviation(&mut self) -> Option<T> {
+        let median = self.median()?;
+
+        self.sorted_buf
+            .iter_mut()
+            .zip(self.buf.as_slice())
+            .for_each(|(dev, &x)| *dev = (x - median).abs());
+
+        Some(median_from_sorted_slice(self.sorted_buf.sort()))
+    }
+
     /// Returns the variance of values in the rolling window
     ///
     /// This second-moment statistical measure quantifies dispersion around the mean
@@ -345,18 +630,18 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).variance().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 7] = [0.1156, 0.0067, 0.0156, 0.0156, 0.0422, 0.0289, 0.0156];
+    /// let expected: [f64; 7] = [0.1156, 0.0067, 0.0156, 0.0156, 0.0467, 0.0289, 0.0156];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// stats.reset().set_ddof(true);
@@ -365,12 +650,26 @@ pub trait SingleStatistics<T> {
     ///     stats.next(*i).variance().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 7] = [0.1733, 0.0100, 0.0233, 0.0233, 0.0633, 0.0433, 0.0233];
+    /// let expected: [f64; 7] = [0.1733, 0.01, 0.0233, 0.0233, 0.07, 0.0433, 0.0233];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    fn variance(&self) -> Option<T>;
+    pub fn variance(&self) -> Option<T> {
+        let variance = self
+            .mean()
+            .zip(self.mean_sq())
+            .map(|(mean, mean_sq)| (mean_sq - (mean * mean)));
+
+        if self.ddof() {
+            variance
+                .zip(self.period_t())
+                .map(|(var, n)| var * (n / (n - T::one())))
+        } else {
+            variance
+        }
+    }
+
     /// Returns the standard deviation of values in the rolling window
     ///
     /// As the square root of variance, this statistic provides an intuitive measure
@@ -388,18 +687,18 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).stddev().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 7] = [0.3400, 0.0816, 0.1249, 0.1249, 0.2054, 0.1700, 0.1249];
+    /// let expected: [f64; 7] = [0.3399, 0.0816, 0.1247, 0.1247, 0.216, 0.17, 0.1247];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// stats.reset().set_ddof(true);
@@ -408,12 +707,15 @@ pub trait SingleStatistics<T> {
     ///     stats.next(*i).stddev().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 7] = [0.4162, 0.1000, 0.1527, 0.1527, 0.2516, 0.2081, 0.1527];
+    /// let expected: [f64; 7] = [0.4163, 0.1, 0.1528, 0.1528, 0.2646, 0.2082, 0.1528];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    fn stddev(&self) -> Option<T>;
+    pub fn stddev(&self) -> Option<T> {
+        self.variance().map(T::sqrt)
+    }
+
     /// Returns the z-score of the most recent value relative to the rolling window
     ///
     /// Z-scores express how many standard deviations a value deviates from the mean,
@@ -431,18 +733,18 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [1.2, -0.7, 3.4, 2.1, -1.5, 0.0, 2.2, -0.3, 1.5, -2.0];
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).zscore().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 8] = [1.253, 0.292, -1.366, -0.136, 1.294, -0.835, 0.349, -1.210];
+    /// let expected: [f64; 8] = [1.2535, 0.2923, -1.3671, -0.1355, 1.2943, -0.8374, 0.3482, -1.2129];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// stats.reset().set_ddof(true);
@@ -451,12 +753,21 @@ pub trait SingleStatistics<T> {
     ///     stats.next(*i).zscore().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 8] = [1.024, 0.239, -1.116, -0.103, 1.000, -0.686, 0.285, -0.990];
+    /// let expected: [f64; 8] = [1.0235, 0.2386, -1.1162, -0.1106, 1.0568, -0.6837, 0.2843, -0.9903];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    fn zscore(&self) -> Option<T>;
+    pub fn zscore(&self) -> Option<T> {
+        self.mean()
+            .zip(self.stddev())
+            .zip(self.value)
+            .map(|((mean, stddev), x)| match stddev.abs() < T::epsilon() {
+                true => T::zero(),
+                _ => (x - mean) / stddev,
+            })
+    }
+
     /// Returns the skewness of values in the rolling window
     ///
     /// This third-moment statistic measures distribution asymmetry, revealing whether
@@ -474,18 +785,18 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(4);
+    /// let mut stats = SingleStatistics::new(4);
     /// let mut results = vec![];
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// inputs.iter().for_each(|i| {
     ///     stats.next(*i).skew().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 6] =  [-0.979, -0.435, -0.0, 0.278, -0.0, -0.323];
+    /// let expected: [f64; 6] =  [-0.97941, -0.43465, 0.0, 0.27803, 0.0, -0.32332];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// stats.reset().set_ddof(true);
@@ -494,12 +805,44 @@ pub trait SingleStatistics<T> {
     ///     stats.next(*i).skew().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 6] = [-1.696, -0.753, 0.000, 0.482, 0.000, -0.560];
+    /// let expected: [f64; 6] = [-1.69639, -0.75284, 0.0, 0.48156, 0.0, -0.56];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    fn skew(&self) -> Option<T>;
+    pub fn skew(&self) -> Option<T>
+    where
+        T: Sum,
+    {
+        let len = self.buf.len();
+        if self.ddof() && len < 3 {
+            return None;
+        }
+
+        let (mean, stddev) = self.mean().zip(self.stddev())?;
+        if stddev.abs() < T::epsilon() {
+            return Some(T::zero());
+        }
+
+        let sum_cubed = self
+            .buf
+            .iter()
+            .map(|&x| {
+                let z = (x - mean) / stddev;
+                z * z * z
+            })
+            .sum();
+
+        let n = T::from(len)?;
+        let _1 = T::one();
+        let _2 = T::from(2.0)?;
+        if self.ddof() {
+            Some((n / ((n - _1) * (n - _2))) * sum_cubed)
+        } else {
+            Some(sum_cubed / n)
+        }
+    }
+
     /// Returns the kurtosis of values in the rolling window
     ///
     /// This fourth-moment statistic measures the 'tailedness' of a distribution, describing
@@ -517,9 +860,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(4);
+    /// let mut stats = SingleStatistics::new(4);
     /// let mut results = vec![];
     /// let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
     /// inputs.iter().for_each(|i| {
@@ -528,7 +871,7 @@ pub trait SingleStatistics<T> {
     ///
     /// let expected: [f64; 6] = [-0.7981, -1.1543, -1.3600, -1.4266, -1.7785, -1.0763];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// stats.reset().set_ddof(true);
@@ -537,12 +880,51 @@ pub trait SingleStatistics<T> {
     ///     stats.next(*i).kurt().map(|v| results.push(v));
     /// });
     ///
-    /// let expected: [f64; 6] = [3.014, 0.343, -1.200, -1.700, -4.339, 0.928];
+    /// let expected: [f64; 6] = [3.0144, 0.3429, -1.2, -1.6995, -4.3391, 0.928];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///   assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    fn kurt(&self) -> Option<T>;
+    pub fn kurt(&self) -> Option<T>
+    where
+        T: Sum,
+    {
+        let len = self.buf.len();
+        if len < 4 {
+            return None;
+        }
+
+        let (mean, stddev) = self.mean().zip(self.stddev())?;
+        if stddev.abs() < T::epsilon() {
+            return Some(T::zero());
+        }
+
+        let sum_fourth = self
+            .buf
+            .iter()
+            .map(|&x| {
+                let z = (x - mean) / stddev;
+                z * z * z * z
+            })
+            .sum();
+
+        let n = T::from(len)?;
+        let _1 = T::one();
+        let _2 = T::from(2)?;
+        let _3 = T::from(3)?;
+
+        let kurt = if self.ddof() {
+            let numerator = n * (n + _1) * sum_fourth;
+            let denominator = (n - _1) * (n - _2) * (n - _3);
+            let correction = _3 * ((n - _1) * (n - _1)) / ((n - _2) * (n - _3));
+            (numerator / denominator) - correction
+        } else {
+            sum_fourth / n - _3
+        };
+
+        Some(kurt)
+    }
+
     /// Returns the slope of the linear regression line
     ///
     /// The regression slope represents the rate of change in the best-fit linear model,
@@ -560,9 +942,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(5);
+    /// let mut stats = SingleStatistics::new(5);
     /// let mut results = vec![];
     /// let inputs = [10.0, 10.5, 11.2, 10.9, 11.5, 11.9, 12.3, 12.1, 11.8, 12.5];
     /// inputs.iter().for_each(|i| {
@@ -574,7 +956,19 @@ pub trait SingleStatistics<T> {
     ///     assert_approx_eq!(e, results[i], 0.1);
     /// }
     /// ```
-    fn linreg_slope(&self) -> Option<T>;
+    pub fn linreg_slope(&self) -> Option<T> {
+        if !self.buf.is_full() {
+            return None;
+        }
+
+        let mut s = PairedStatistics::new(self.period);
+        for (i, &x) in self.buf.iter().enumerate() {
+            s.next((x, T::from(i)?));
+        }
+
+        s.beta()
+    }
+
     /// Returns both slope and intercept of the linear regression line
     ///
     /// This comprehensive regression analysis provides the complete linear model,
@@ -592,9 +986,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(5);
+    /// let mut stats = SingleStatistics::new(5);
     /// let mut ddof = false;
     /// let mut results = vec![];
     /// let inputs = [10.0, 10.5, 11.2, 10.9, 11.5, 11.9, 12.3, 12.1, 11.8, 12.5];
@@ -615,7 +1009,15 @@ pub trait SingleStatistics<T> {
     ///     assert_approx_eq!(e.1, results[i].1, 0.1);
     /// }
     /// ```
-    fn linreg_slope_intercept(&self) -> Option<(T, T)>;
+    pub fn linreg_slope_intercept(&self) -> Option<(T, T)> {
+        let (mean, slope) = self.mean().zip(self.linreg_slope())?;
+        let _1 = T::one();
+        self.period_t()
+            .zip(T::from(2))
+            .map(|(p, _2)| (p - _1) / _2)
+            .map(|mt| (slope, mean - slope * mt))
+    }
+
     /// Returns the y-intercept of the linear regression line
     ///
     /// The regression intercept represents the base level or starting point of the
@@ -633,9 +1035,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(5);
+    /// let mut stats = SingleStatistics::new(5);
     /// let mut results = vec![];
     /// let inputs = [10.0, 10.5, 11.2, 10.9, 11.5, 11.9, 12.3, 12.1, 11.8, 12.5];
     /// inputs.iter().for_each(|i| {
@@ -648,7 +1050,11 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn linreg_intercept(&self) -> Option<T>;
+    pub fn linreg_intercept(&self) -> Option<T> {
+        self.linreg_slope_intercept()
+            .map(|(_, intercept)| intercept)
+    }
+
     /// Returns the angle (in degrees) of the linear regression line
     ///
     /// The regression angle converts the slope into degrees, providing a more intuitive
@@ -666,9 +1072,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(5);
+    /// let mut stats = SingleStatistics::new(5);
     /// let mut ddof = false;
     /// let mut results = vec![];
     /// let inputs = [10.0, 10.5, 11.2, 10.9, 11.5, 11.9, 12.3, 12.1, 11.8, 12.5];
@@ -682,7 +1088,10 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn linreg_angle(&self) -> Option<T>;
+    pub fn linreg_angle(&self) -> Option<T> {
+        self.linreg_slope().map(|slope| slope.atan())
+    }
+
     /// Returns the linear regression value (predicted y) for the last position
     ///
     /// This calculation provides the expected value at the current position according to
@@ -700,9 +1109,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(5);
+    /// let mut stats = SingleStatistics::new(5);
     /// let mut ddof = false;
     /// let mut results = vec![];
     /// let inputs = [10.0, 10.5, 11.2, 10.9, 11.5, 11.9, 12.3, 12.1, 11.8, 12.5];
@@ -716,7 +1125,13 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn linreg(&self) -> Option<T>;
+    pub fn linreg(&self) -> Option<T> {
+        let _1 = T::one();
+        self.linreg_slope_intercept()
+            .zip(self.period_t())
+            .map(|((slope, intercept), period)| slope * (period - _1) + intercept)
+    }
+
     /// Returns the current drawdown from peak
     ///
     /// Measures the percentage decline from the highest observed value to the current value,
@@ -734,9 +1149,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [100.0, 110.0, 105.0, 115.0, 100.0, 95.0, 105.0, 110.0, 100.0];
     /// inputs.iter().for_each(|i| {
@@ -748,7 +1163,16 @@ pub trait SingleStatistics<T> {
     ///     assert_approx_eq!(e, results[i], 0.1);
     /// }
     /// ```
-    fn drawdown(&mut self) -> Option<T>;
+    pub fn drawdown(&mut self) -> Option<T> {
+        self.max().zip(self.value).map(|(max, input)| {
+            if max <= T::zero() || input <= T::zero() {
+                T::zero()
+            } else {
+                ((max - input) / max).max(T::zero())
+            }
+        })
+    }
+
     /// Returns the maximum drawdown in the window
     ///
     /// Maximum drawdown measures the largest peak-to-trough decline within a time series,
@@ -766,9 +1190,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [100.0, 110.0, 105.0, 115.0, 100.0, 95.0, 105.0, 110.0, 100.0];
     /// inputs.iter().for_each(|i| {
@@ -781,7 +1205,15 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn max_drawdown(&mut self) -> Option<T>;
+    pub fn max_drawdown(&mut self) -> Option<T> {
+        let drawdown = self.drawdown()?;
+        self.max_drawdown = match self.max_drawdown {
+            Some(md) => Some(md.max(drawdown)),
+            None => Some(drawdown),
+        };
+        self.max_drawdown
+    }
+
     /// Returns the difference between the last and first values
     ///
     /// This fundamental calculation of absolute change between two points provides
@@ -799,9 +1231,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [100.0, 102.0, 105.0, 101.0, 98.0];
     /// inputs.iter().for_each(|i| {
@@ -814,7 +1246,12 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn diff(&self) -> Option<T>;
+    pub fn diff(&self) -> Option<T> {
+        self.value
+            .zip(self.popped)
+            .map(|(input, popped)| input - popped)
+    }
+
     /// Returns the percentage change between the first and last values
     ///
     /// Percentage change normalizes absolute changes by the starting value, enabling
@@ -832,9 +1269,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [100.0, 105.0, 103.0, 106.0, 110.0, 108.0];
     /// inputs.iter().for_each(|i| {
@@ -847,7 +1284,16 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn pct_change(&self) -> Option<T>;
+    pub fn pct_change(&self) -> Option<T> {
+        self.diff().zip(self.popped).and_then(|(diff, popped)| {
+            if popped.is_zero() {
+                None
+            } else {
+                Some(diff / popped)
+            }
+        })
+    }
+
     /// Returns the logarithmic return between the first and last values
     ///
     /// Logarithmic returns (continuous returns) offer mathematical advantages over simple
@@ -865,13 +1311,13 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [100.0, 105.0, 103.0, 106.0, 110.0, 108.0];
     /// inputs.iter().for_each(|i| {
-    ///     stats.next(*i).pct_change().map(|v| results.push(v));
+    ///     stats.next(*i).log_return().map(|v| results.push(v));
     /// });
     ///
     /// let expected: [f64; 3] = [0.05827, 0.04652, 0.04727];
@@ -880,7 +1326,15 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn log_return(&self) -> Option<T>;
+    pub fn log_return(&self) -> Option<T> {
+        self.value.zip(self.popped).and_then(|(current, popped)| {
+            if popped <= T::zero() || current <= T::zero() {
+                None
+            } else {
+                Some(current.ln() - popped.ln())
+            }
+        })
+    }
 
     /// Returns the quantile of the values in the window
     ///
@@ -895,9 +1349,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [10.0, 20.0, 30.0, 40.0, 50.0];
     /// inputs.iter().for_each(|i| {
@@ -909,7 +1363,14 @@ pub trait SingleStatistics<T> {
     ///     assert_approx_eq!(e, results[i], 0.1);
     /// }
     /// ```
-    fn quantile(&mut self, q: f64) -> Option<T>;
+    pub fn quantile(&mut self, q: f64) -> Option<T> {
+        if !self.buf.is_full() || !(0.0..=1.0).contains(&q) {
+            return None;
+        }
+        let period = self.period;
+        let sorted = self.sorted_buf();
+        quantile_from_sorted_slice(sorted, q, period)
+    }
 
     /// Returns the interquartile range of the values in the window
     ///
@@ -920,9 +1381,9 @@ pub trait SingleStatistics<T> {
     /// # Examples
     ///
     /// ```
-    /// # use ta_statistics::{Statistics, SingleStatistics};
+    /// # use ta_statistics::SingleStatistics;
     /// # use assert_approx_eq::assert_approx_eq;
-    /// let mut stats = Statistics::new(3);
+    /// let mut stats = SingleStatistics::new(3);
     /// let mut results = vec![];
     /// let inputs = [10.0, 20.0, 30.0, 40.0, 50.0];
     /// inputs.iter().for_each(|i| {
@@ -935,5 +1396,17 @@ pub trait SingleStatistics<T> {
     /// }
     ///
     /// ```
-    fn iqr(&mut self) -> Option<T>;
+    pub fn iqr(&mut self) -> Option<T> {
+        if !self.buf.is_full() {
+            return None;
+        }
+
+        let period = self.period;
+        let sorted = self.sorted_buf();
+
+        let q1 = quantile_from_sorted_slice(sorted, 0.25, period);
+        let q3 = quantile_from_sorted_slice(sorted, 0.75, period);
+
+        q1.zip(q3).map(|(q1, q3)| q3 - q1)
+    }
 }
