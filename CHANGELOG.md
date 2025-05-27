@@ -1,3 +1,8 @@
+## v0.2.1 (May 27, 2025)
+
+- Added recompute to both statistics
+- Minor refactoring
+
 ## v0.2.0 (May 27, 2025)
 
 - Implemented Kahan-Babuska-Neumaier algorithm for compensated summation to prevent catastrophic cancellation in floating-point calculations

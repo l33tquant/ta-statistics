@@ -23,7 +23,7 @@ mod utils;
 pub(crate) use utils::{RingBuffer, helper};
 
 mod rolling_moments;
-pub use rolling_moments::RollingMoments;
+pub(crate) use rolling_moments::RollingMoments;
 
 mod single_statistics;
 pub use single_statistics::SingleStatistics;

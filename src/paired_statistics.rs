@@ -60,6 +60,21 @@ where
         self
     }
 
+    /// Recomputes the paired statistics, could be called to avoid
+    /// prolonged compounding of floating rounding errors
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The rolling moments object
+    pub fn recompute(&mut self) -> &mut Self {
+        self.moments_x.recompute();
+        self.moments_y.recompute();
+        for (&x, &y) in self.moments_x.iter().zip(self.moments_y.iter()) {
+            self.sum_xy += x * y;
+        }
+        self
+    }
+
     /// Updates the paired statistical calculations with a new value pair in the time series
     ///
     /// Incorporates a new data point pair into the rolling window, maintaining the specified
@@ -84,9 +99,7 @@ where
             }
         }
 
-        if let Some((vx, vy)) = self.moments_x.value().zip(self.moments_y.value()) {
-            self.sum_xy += vx * vy;
-        }
+        self.sum_xy += x * y;
 
         self
     }

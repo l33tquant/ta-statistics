@@ -77,7 +77,7 @@ where
         self
     }
 
-    /// Recomputes the rolling statistics, could be called to avoid
+    /// Recomputes the single statistics, could be called to avoid
     /// prolonged compounding of floating rounding errors
     ///
     /// # Returns
