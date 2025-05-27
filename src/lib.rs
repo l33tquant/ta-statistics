@@ -18,7 +18,7 @@
 #[macro_use]
 extern crate alloc;
 
-pub(crate) type KBN<T> = compensated_summation::KahanBabuskaNeumaier<T>;
+pub(crate) type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
 mod utils;
 pub(crate) use utils::{Window, helper};

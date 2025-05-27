@@ -1,6 +1,6 @@
 use num_traits::Float;
 
-use crate::{KBN, Window};
+use crate::{Kbn, Window};
 
 /// A structure that computes various statistics over a fixed-size window of paired values.
 ///
@@ -22,11 +22,11 @@ pub struct PairedStatistics<T> {
     /// Previous value popped out the window, only available after full window
     popped: Option<(T, T)>,
     /// Sum of inputs
-    sum: (KBN<T>, KBN<T>),
+    sum: (Kbn<T>, Kbn<T>),
     /// Sum of squares
-    sum_sq: (KBN<T>, KBN<T>),
+    sum_sq: (Kbn<T>, Kbn<T>),
     /// Sum of products
-    sum_prod: (KBN<T>, KBN<T>),
+    sum_prod: (Kbn<T>, Kbn<T>),
 }
 
 impl<T> PairedStatistics<T>

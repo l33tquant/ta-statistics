@@ -3,7 +3,7 @@ use num_traits::Float;
 use core::iter::Sum;
 
 use crate::{
-    KBN, PairedStatistics, Window,
+    Kbn, PairedStatistics, Window,
     helper::{median_from_sorted_slice, quantile_from_sorted_slice},
 };
 
@@ -32,13 +32,13 @@ pub struct SingleStatistics<T> {
     /// Previous value popped out the window, only available after full window
     popped: Option<T>,
     /// Sum of inputs
-    sum: KBN<T>,
+    sum: Kbn<T>,
     /// Sum of squares
-    sum_sq: KBN<T>,
+    sum_sq: Kbn<T>,
     /// Sum of cubes
-    sum_cube: KBN<T>,
+    sum_cube: Kbn<T>,
     /// Sum of fourth powers
-    sum_quad: KBN<T>,
+    sum_quad: Kbn<T>,
     /// Current minimum value
     min: Option<T>,
     /// Current maximum value
@@ -68,10 +68,10 @@ where
             ddof: false,
             value: None,
             popped: None,
-            sum: KBN::default(),
-            sum_sq: KBN::default(),
-            sum_cube: KBN::default(),
-            sum_quad: KBN::default(),
+            sum: Kbn::default(),
+            sum_sq: Kbn::default(),
+            sum_cube: Kbn::default(),
+            sum_quad: Kbn::default(),
             min: None,
             max: None,
             max_drawdown: None,
@@ -98,10 +98,10 @@ where
         self.ddof = false;
         self.value = None;
         self.popped = None;
-        self.sum = KBN::default();
-        self.sum_sq = KBN::default();
-        self.sum_cube = KBN::default();
-        self.sum_quad = KBN::default();
+        self.sum = Kbn::default();
+        self.sum_sq = Kbn::default();
+        self.sum_cube = Kbn::default();
+        self.sum_quad = Kbn::default();
         self.min = None;
         self.max = None;
         self.max_drawdown = None;
@@ -153,7 +153,7 @@ where
     /// window size by removing the oldest value when necessary. This is the core method
     /// that should be called whenever new data is available for processing.
     ///
-    /// The statistics are calculated using the Kahan-Babuška-Neumaier (KBN) algorithm
+    /// The statistics are calculated using the Kahan-Babuška-Neumaier (Kbn) algorithm
     /// for numerically stable summation. This compensated summation technique minimizes
     /// floating-point errors that would otherwise accumulate in long-running calculations,
     /// particularly important for financial time-series analysis where precision is critical.
