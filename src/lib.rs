@@ -15,13 +15,12 @@
 )]
 #![allow(clippy::just_underscores_and_digits, clippy::len_without_is_empty)]
 
-#[macro_use]
 extern crate alloc;
 
 pub(crate) type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
 mod utils;
-pub(crate) use utils::{RingBuffer, Window, helper};
+pub(crate) use utils::{RingBuffer, helper};
 
 mod rolling_moments;
 pub use rolling_moments::RollingMoments;

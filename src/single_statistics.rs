@@ -3,7 +3,7 @@ use num_traits::Float;
 use core::iter::Sum;
 
 use crate::{
-    Kbn, PairedStatistics, Window,
+    PairedStatistics, RingBuffer, RollingMoments,
     helper::{median_from_sorted_slice, quantile_from_sorted_slice},
 };
 
@@ -19,26 +19,10 @@ use crate::{
 /// and alpha generation in quantitative trading strategies.
 #[derive(Debug, Clone)]
 pub struct SingleStatistics<T> {
-    /// Statistics period
-    period: usize,
-    /// Fixed circular buffer
-    buf: Window<T>,
+    /// Rolling moments
+    moments: RollingMoments<T>,
     /// Fixed buffer for sorting on demand
-    sorted_buf: Window<T>,
-    /// Delta Degrees of Freedom
-    ddof: bool,
-    /// Latest updated value to statistics
-    value: Option<T>,
-    /// Previous value popped out the window, only available after full window
-    popped: Option<T>,
-    /// Sum of inputs
-    sum: Kbn<T>,
-    /// Sum of squares
-    sum_sq: Kbn<T>,
-    /// Sum of cubes
-    sum_cube: Kbn<T>,
-    /// Sum of fourth powers
-    sum_quad: Kbn<T>,
+    sorted_buf: RingBuffer<T>,
     /// Current minimum value
     min: Option<T>,
     /// Current maximum value
@@ -62,16 +46,8 @@ where
     /// * `Self` - The statistics object
     pub fn new(period: usize) -> Self {
         Self {
-            period,
-            buf: Window::new(period),
-            sorted_buf: Window::new(period),
-            ddof: false,
-            value: None,
-            popped: None,
-            sum: Kbn::default(),
-            sum_sq: Kbn::default(),
-            sum_cube: Kbn::default(),
-            sum_quad: Kbn::default(),
+            moments: RollingMoments::new(period),
+            sorted_buf: RingBuffer::new(period),
             min: None,
             max: None,
             max_drawdown: None,
@@ -84,7 +60,7 @@ where
     ///
     /// * `usize` - The period of the statistics
     pub fn period(&self) -> usize {
-        self.period
+        self.moments.period()
     }
 
     /// Resets the statistics
@@ -93,18 +69,22 @@ where
     ///
     /// * `&mut Self` - The statistics object
     pub fn reset(&mut self) -> &mut Self {
-        self.buf.reset();
+        self.moments.reset();
         self.sorted_buf.reset();
-        self.ddof = false;
-        self.value = None;
-        self.popped = None;
-        self.sum = Kbn::default();
-        self.sum_sq = Kbn::default();
-        self.sum_cube = Kbn::default();
-        self.sum_quad = Kbn::default();
         self.min = None;
         self.max = None;
         self.max_drawdown = None;
+        self
+    }
+
+    /// Recomputes the rolling statistics, could be called to avoid
+    /// prolonged compounding of floating rounding errors
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The rolling moments object
+    pub fn recompute(&mut self) -> &mut Self {
+        self.moments.recompute();
         self
     }
 
@@ -112,7 +92,7 @@ where
     where
         T: Float,
     {
-        T::from(self.period)
+        T::from(self.period())
     }
 
     // Copies and sorts the buf
@@ -120,7 +100,7 @@ where
     where
         T: Copy + Default + PartialOrd,
     {
-        self.sorted_buf.copy_from_slice(self.buf.as_slice());
+        self.sorted_buf.copy_from_slice(self.moments.as_slice());
         self.sorted_buf.sort()
     }
 
@@ -130,7 +110,7 @@ where
     ///
     /// * `bool` - The Delta Degrees of Freedom
     pub const fn ddof(&self) -> bool {
-        self.ddof
+        self.moments.ddof()
     }
 
     /// Sets the Delta Degrees of Freedom
@@ -143,7 +123,7 @@ where
     ///
     /// * `&mut Self` - The statistics object
     pub const fn set_ddof(&mut self, ddof: bool) -> &mut Self {
-        self.ddof = ddof;
+        self.moments.set_ddof(ddof);
         self
     }
 
@@ -166,27 +146,7 @@ where
     ///
     /// * `&mut Self` - The statistics object
     pub fn next(&mut self, value: T) -> &mut Self {
-        let popped = self.buf.next(value);
-        self.value = Some(value);
-
-        if self.buf.is_full() {
-            self.popped = match self.popped {
-                None => (self.buf.index() > 0).then_some(popped),
-                _ => Some(popped),
-            };
-            if self.popped.is_some() {
-                self.sum -= popped;
-                self.sum_sq -= popped * popped;
-                self.sum_cube -= popped * popped * popped;
-                self.sum_quad -= popped * popped * popped * popped;
-            }
-        }
-
-        self.sum += value;
-        self.sum_sq += value * value;
-        self.sum_cube += value * value * value;
-        self.sum_quad += value * value * value * value;
-
+        self.moments.next(value);
         self
     }
 
@@ -220,7 +180,7 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn sum(&self) -> Option<T> {
-        self.buf.is_full().then_some(self.sum.total())
+        self.moments.sum()
     }
 
     /// Returns the sum of squares of all values in the rolling window
@@ -252,7 +212,7 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn sum_sq(&self) -> Option<T> {
-        self.buf.is_full().then_some(self.sum_sq.total())
+        self.moments.sum_sq()
     }
 
     /// Returns the arithmetic mean of all values in the rolling window
@@ -288,7 +248,7 @@ where
     /// }
     /// ```
     pub fn mean(&self) -> Option<T> {
-        self.sum().zip(self.period_t()).map(|(sum, n)| sum / n)
+        self.moments.mean()
     }
 
     /// Returns the mean of squares of all values in the rolling window
@@ -324,9 +284,7 @@ where
     /// }
     /// ```
     pub fn mean_sq(&self) -> Option<T> {
-        self.sum_sq()
-            .zip(self.period_t())
-            .map(|(sum_sq, n)| sum_sq / n)
+        self.moments.mean_sq()
     }
 
     /// Returns the mode (most frequently occurring value) in the rolling window
@@ -360,7 +318,7 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn mode(&mut self) -> Option<T> {
-        if !self.buf.is_full() {
+        if !self.moments.is_ready() {
             return None;
         }
 
@@ -423,8 +381,8 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn median(&mut self) -> Option<T> {
-        self.buf
-            .is_full()
+        self.moments
+            .is_ready()
             .then_some(median_from_sorted_slice(self.sorted_buf()))
     }
 
@@ -459,17 +417,17 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn min(&mut self) -> Option<T> {
-        if !self.buf.is_full() {
+        if !self.moments.is_ready() {
             return None;
         }
 
         self.min = match self.min {
-            None => self.buf.min(),
+            None => self.moments.min(),
             Some(min) => {
-                if self.popped == Some(min) {
-                    self.buf.min()
-                } else if self.value < Some(min) {
-                    self.value
+                if self.moments.popped() == Some(min) {
+                    self.moments.min()
+                } else if self.moments.value() < Some(min) {
+                    self.moments.value()
                 } else {
                     Some(min)
                 }
@@ -509,17 +467,17 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn max(&mut self) -> Option<T> {
-        if !self.buf.is_full() {
+        if !self.moments.is_ready() {
             return None;
         }
 
         self.max = match self.max {
-            None => self.buf.max(),
+            None => self.moments.max(),
             Some(max) => {
-                if self.popped == Some(max) {
-                    self.buf.max()
-                } else if self.value > Some(max) {
-                    self.value
+                if self.moments.popped() == Some(max) {
+                    self.moments.max()
+                } else if self.moments.value() > Some(max) {
+                    self.moments.value()
                 } else {
                     Some(max)
                 }
@@ -566,7 +524,7 @@ where
         T: Sum,
     {
         let mean = self.mean()?;
-        let abs_sum = self.buf.iter().map(|&x| (x - mean).abs()).sum::<T>();
+        let abs_sum = self.moments.iter().map(|&x| (x - mean).abs()).sum::<T>();
         self.period_t().map(|n| abs_sum / n)
     }
 
@@ -601,13 +559,12 @@ where
     ///     assert_approx_eq!(e, results[i], 0.1);
     /// }
     ///
-    /// ```    
+    /// ```
     pub fn median_absolute_deviation(&mut self) -> Option<T> {
         let median = self.median()?;
-
         self.sorted_buf
             .iter_mut()
-            .zip(self.buf.as_slice())
+            .zip(self.moments.as_slice())
             .for_each(|(dev, &x)| *dev = (x - median).abs());
 
         Some(median_from_sorted_slice(self.sorted_buf.sort()))
@@ -656,18 +613,7 @@ where
     /// }
     /// ```
     pub fn variance(&self) -> Option<T> {
-        let variance = self
-            .mean()
-            .zip(self.mean_sq())
-            .map(|(mean, mean_sq)| (mean_sq - (mean * mean)));
-
-        if self.ddof() {
-            variance
-                .zip(self.period_t())
-                .map(|(var, n)| var * (n / (n - T::one())))
-        } else {
-            variance
-        }
+        self.moments.variance()
     }
 
     /// Returns the standard deviation of values in the rolling window
@@ -713,7 +659,7 @@ where
     /// }
     /// ```
     pub fn stddev(&self) -> Option<T> {
-        self.variance().map(T::sqrt)
+        self.moments.stddev()
     }
 
     /// Returns the z-score of the most recent value relative to the rolling window
@@ -759,13 +705,7 @@ where
     /// }
     /// ```
     pub fn zscore(&self) -> Option<T> {
-        self.mean()
-            .zip(self.stddev())
-            .zip(self.value)
-            .map(|((mean, stddev), x)| match stddev.abs() < T::epsilon() {
-                true => T::zero(),
-                _ => (x - mean) / stddev,
-            })
+        self.moments.zscore()
     }
 
     /// Returns the skewness of values in the rolling window
@@ -810,37 +750,8 @@ where
     ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    pub fn skew(&self) -> Option<T>
-    where
-        T: Sum,
-    {
-        let len = self.buf.len();
-        if self.ddof() && len < 3 {
-            return None;
-        }
-
-        let (mean, stddev) = self.mean().zip(self.stddev())?;
-        if stddev.abs() < T::epsilon() {
-            return Some(T::zero());
-        }
-
-        let sum_cubed = self
-            .buf
-            .iter()
-            .map(|&x| {
-                let z = (x - mean) / stddev;
-                z * z * z
-            })
-            .sum();
-
-        let n = T::from(len)?;
-        let _1 = T::one();
-        let _2 = T::from(2.0)?;
-        if self.ddof() {
-            Some((n / ((n - _1) * (n - _2))) * sum_cubed)
-        } else {
-            Some(sum_cubed / n)
-        }
+    pub fn skew(&self) -> Option<T> {
+        self.moments.skew()
     }
 
     /// Returns the kurtosis of values in the rolling window
@@ -885,44 +796,8 @@ where
     ///   assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
-    pub fn kurt(&self) -> Option<T>
-    where
-        T: Sum,
-    {
-        let len = self.buf.len();
-        if len < 4 {
-            return None;
-        }
-
-        let (mean, stddev) = self.mean().zip(self.stddev())?;
-        if stddev.abs() < T::epsilon() {
-            return Some(T::zero());
-        }
-
-        let sum_fourth = self
-            .buf
-            .iter()
-            .map(|&x| {
-                let z = (x - mean) / stddev;
-                z * z * z * z
-            })
-            .sum();
-
-        let n = T::from(len)?;
-        let _1 = T::one();
-        let _2 = T::from(2)?;
-        let _3 = T::from(3)?;
-
-        let kurt = if self.ddof() {
-            let numerator = n * (n + _1) * sum_fourth;
-            let denominator = (n - _1) * (n - _2) * (n - _3);
-            let correction = _3 * ((n - _1) * (n - _1)) / ((n - _2) * (n - _3));
-            (numerator / denominator) - correction
-        } else {
-            sum_fourth / n - _3
-        };
-
-        Some(kurt)
+    pub fn kurt(&self) -> Option<T> {
+        self.moments.kurt()
     }
 
     /// Returns the slope of the linear regression line
@@ -957,12 +832,12 @@ where
     /// }
     /// ```
     pub fn linreg_slope(&self) -> Option<T> {
-        if !self.buf.is_full() {
+        if !self.moments.is_ready() {
             return None;
         }
 
-        let mut s = PairedStatistics::new(self.period);
-        for (i, &x) in self.buf.iter().enumerate() {
+        let mut s = PairedStatistics::new(self.period());
+        for (i, &x) in self.moments.iter().enumerate() {
             s.next((x, T::from(i)?));
         }
 
@@ -1164,7 +1039,7 @@ where
     /// }
     /// ```
     pub fn drawdown(&mut self) -> Option<T> {
-        self.max().zip(self.value).map(|(max, input)| {
+        self.max().zip(self.moments.value()).map(|(max, input)| {
             if max <= T::zero() || input <= T::zero() {
                 T::zero()
             } else {
@@ -1247,8 +1122,9 @@ where
     ///
     /// ```
     pub fn diff(&self) -> Option<T> {
-        self.value
-            .zip(self.popped)
+        self.moments
+            .value()
+            .zip(self.moments.popped())
             .map(|(input, popped)| input - popped)
     }
 
@@ -1285,13 +1161,15 @@ where
     ///
     /// ```
     pub fn pct_change(&self) -> Option<T> {
-        self.diff().zip(self.popped).and_then(|(diff, popped)| {
-            if popped.is_zero() {
-                None
-            } else {
-                Some(diff / popped)
-            }
-        })
+        self.diff()
+            .zip(self.moments.popped())
+            .and_then(|(diff, popped)| {
+                if popped.is_zero() {
+                    None
+                } else {
+                    Some(diff / popped)
+                }
+            })
     }
 
     /// Returns the logarithmic return between the first and last values
@@ -1327,13 +1205,16 @@ where
     ///
     /// ```
     pub fn log_return(&self) -> Option<T> {
-        self.value.zip(self.popped).and_then(|(current, popped)| {
-            if popped <= T::zero() || current <= T::zero() {
-                None
-            } else {
-                Some(current.ln() - popped.ln())
-            }
-        })
+        self.moments
+            .value()
+            .zip(self.moments.popped())
+            .and_then(|(current, popped)| {
+                if popped <= T::zero() || current <= T::zero() {
+                    None
+                } else {
+                    Some(current.ln() - popped.ln())
+                }
+            })
     }
 
     /// Returns the quantile of the values in the window
@@ -1364,10 +1245,10 @@ where
     /// }
     /// ```
     pub fn quantile(&mut self, q: f64) -> Option<T> {
-        if !self.buf.is_full() || !(0.0..=1.0).contains(&q) {
+        if !self.moments.is_ready() || !(0.0..=1.0).contains(&q) {
             return None;
         }
-        let period = self.period;
+        let period = self.period();
         let sorted = self.sorted_buf();
         quantile_from_sorted_slice(sorted, q, period)
     }
@@ -1397,11 +1278,11 @@ where
     ///
     /// ```
     pub fn iqr(&mut self) -> Option<T> {
-        if !self.buf.is_full() {
+        if !self.moments.is_ready() {
             return None;
         }
 
-        let period = self.period;
+        let period = self.period();
         let sorted = self.sorted_buf();
 
         let q1 = quantile_from_sorted_slice(sorted, 0.25, period);

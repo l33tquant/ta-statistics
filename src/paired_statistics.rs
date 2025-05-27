@@ -1,6 +1,6 @@
 use num_traits::Float;
 
-use crate::{Kbn, Window};
+use crate::{Kbn, RollingMoments};
 
 /// A structure that computes various statistics over a fixed-size window of paired values.
 ///
@@ -11,22 +11,10 @@ use crate::{Kbn, Window};
 /// are removed from the window, making it efficient for rolling statistics analysis.
 #[derive(Debug, Clone)]
 pub struct PairedStatistics<T> {
-    /// Statistics period
-    period: usize,
-    /// Fixed circular buffer
-    buf: Window<(T, T)>,
-    /// Delta Degrees of Freedom
+    moments_x: RollingMoments<T>,
+    moments_y: RollingMoments<T>,
+    sum_xy: Kbn<T>,
     ddof: bool,
-    /// Latest updated value to statistics
-    value: Option<(T, T)>,
-    /// Previous value popped out the window, only available after full window
-    popped: Option<(T, T)>,
-    /// Sum of inputs
-    sum: (Kbn<T>, Kbn<T>),
-    /// Sum of squares
-    sum_sq: (Kbn<T>, Kbn<T>),
-    /// Sum of products
-    sum_prod: (Kbn<T>, Kbn<T>),
 }
 
 impl<T> PairedStatistics<T>
@@ -44,14 +32,10 @@ where
     /// * `Self` - The `PairedStatistics` instance
     pub fn new(period: usize) -> Self {
         Self {
-            period,
-            buf: Window::new(period),
+            moments_x: RollingMoments::new(period),
+            moments_y: RollingMoments::new(period),
+            sum_xy: Kbn::default(),
             ddof: false,
-            value: None,
-            popped: None,
-            sum: Default::default(),
-            sum_sq: Default::default(),
-            sum_prod: Default::default(),
         }
     }
 
@@ -61,21 +45,18 @@ where
     ///
     /// * `usize` - The period of the statistics
     pub fn period(&self) -> usize {
-        self.period
+        self.moments_x.period()
     }
+
     /// Resets the statistics
     ///
     /// # Returns
     ///
     /// * `&mut Self` - The statistics object
     pub fn reset(&mut self) -> &mut Self {
-        self.buf.reset();
-        self.ddof = false;
-        self.value = None;
-        self.popped = None;
-        self.sum = Default::default();
-        self.sum_sq = Default::default();
-        self.sum_prod = Default::default();
+        self.moments_x.reset();
+        self.moments_y.reset();
+        self.sum_xy = Default::default();
         self
     }
 
@@ -94,83 +75,20 @@ where
     ///
     /// * `&mut Self` - The updated statistics object for method chaining
     pub fn next(&mut self, (x, y): (T, T)) -> &mut Self {
-        let popped = self.buf.next((x, y));
-        self.value = Some((x, y));
+        self.moments_x.next(x);
+        self.moments_y.next(y);
 
-        if self.buf.is_full() {
-            self.popped = match self.popped {
-                None => (self.buf.index() > 0).then_some(popped),
-                _ => Some(popped),
-            };
-            if self.popped.is_some() {
-                self.sum.0 -= popped.0;
-                self.sum.1 -= popped.1;
-                self.sum_sq.0 -= popped.0 * popped.0;
-                self.sum_sq.1 -= popped.1 * popped.1;
-
-                let prod_px_py = popped.0 * popped.1;
-                self.sum_prod.0 -= prod_px_py;
-                self.sum_prod.1 -= prod_px_py;
+        if self.moments_x.is_ready() {
+            if let Some((px, py)) = self.moments_x.popped().zip(self.moments_y.popped()) {
+                self.sum_xy -= px * py;
             }
         }
 
-        self.sum.0 += x;
-        self.sum.1 += y;
-        self.sum_sq.0 += x * x;
-        self.sum_sq.1 += y * y;
-
-        let prod_xy = x * y;
-        self.sum_prod.0 += prod_xy;
-        self.sum_prod.1 += prod_xy;
+        if let Some((vx, vy)) = self.moments_x.value().zip(self.moments_y.value()) {
+            self.sum_xy += vx * vy;
+        }
 
         self
-    }
-
-    fn sum(&self) -> Option<(T, T)> {
-        self.buf
-            .is_full()
-            .then_some((self.sum.0.total(), self.sum.1.total()))
-    }
-
-    fn mean(&self) -> Option<(T, T)> {
-        self.sum()
-            .zip(T::from(self.period))
-            .map(|(s, n)| (s.0 / n, s.1 / n))
-    }
-
-    fn mean_prod(&self) -> Option<(T, T)> {
-        if self.buf.is_full() {
-            let n = T::from(self.period)?;
-            return Some((self.sum_prod.0.total() / n, self.sum_prod.1.total() / n));
-        }
-        None
-    }
-
-    fn mean_sq(&self) -> Option<(T, T)> {
-        if self.buf.is_full() {
-            let n = T::from(self.period)?;
-            return Some((self.sum_sq.0.total() / n, self.sum_sq.1.total() / n));
-        }
-        None
-    }
-
-    fn variance(&self) -> Option<(T, T)> {
-        let variance = self
-            .mean()
-            .zip(self.mean_sq())
-            .map(|(mean, mean_sq)| (mean_sq.0 - (mean.0 * mean.0), mean_sq.1 - (mean.1 * mean.1)));
-
-        if self.ddof() {
-            variance
-                .zip(T::from(self.period))
-                .map(|(var, n)| (var.0 * (n / (n - T::one())), var.1 * (n / (n - T::one()))))
-        } else {
-            variance
-        }
-    }
-
-    fn stddev(&self) -> Option<(T, T)> {
-        self.variance().map(|var| (var.0.sqrt(), var.1.sqrt()))
     }
 
     /// Returns the Delta Degrees of Freedom
@@ -194,6 +112,47 @@ where
     pub const fn set_ddof(&mut self, ddof: bool) -> &mut Self {
         self.ddof = ddof;
         self
+    }
+    /// Returns the mean of the values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<(T, T)>` - The mean of the values in the window, or `None` if the window is not full
+    fn mean(&self) -> Option<(T, T)> {
+        self.moments_x.mean().zip(self.moments_y.mean())
+    }
+
+    /// Returns the mean of the product of the values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<(T, T)>` - The mean of the product of the values in the window, or `None` if the window is not full
+    fn mean_prod(&self) -> Option<(T, T)> {
+        if !self.moments_x.is_ready() {
+            return None;
+        }
+
+        let n = T::from(self.period())?;
+        let mp = self.sum_xy.total() / n;
+        Some((mp, mp))
+    }
+
+    /// Returns the variance of the values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<(T, T)>` - The variance of the values in the window, or `None` if the window is not full
+    fn variance(&self) -> Option<(T, T)> {
+        self.moments_x.variance().zip(self.moments_y.variance())
+    }
+
+    /// Returns the standard deviation of the values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<(T, T)>` - The standard deviation of the values in the window, or `None` if the window is not full
+    fn stddev(&self) -> Option<(T, T)> {
+        self.moments_x.stddev().zip(self.moments_y.stddev())
     }
 
     /// Returns the covariance of the paired values in the rolling window
@@ -225,7 +184,7 @@ where
     ///
     /// let expected: [f64; 3] = [0.6667, 1.3333, 3.3333];
     ///  for (i, e) in expected.iter().enumerate() {
-    ///  assert_approx_eq!(e, results[i], 0.1);
+    ///  assert_approx_eq!(e, results[i], 0.001);
     ///  }
     ///
     /// stats.reset().set_ddof(true);
@@ -236,7 +195,7 @@ where
     ///
     /// let expected: [f64; 3] = [1.0, 2.0, 5.0];
     /// for (i, e) in expected.iter().enumerate() {
-    ///    assert_approx_eq!(e, results[i], 0.1);
+    ///    assert_approx_eq!(e, results[i], 0.0001);
     /// }
     /// ```
     pub fn cov(&self) -> Option<T> {
@@ -245,7 +204,7 @@ where
 
         let cov = mean_xy - mean_x * mean_y;
 
-        let n = T::from(self.period)?;
+        let n = T::from(self.period())?;
         if self.ddof() {
             Some(cov * (n / (n - T::one())))
         } else {
@@ -293,7 +252,7 @@ where
     /// });
     /// let expected: [f64; 8] = [0.939464, 0.458316, 0.691218, 0.859137, 0.935658, 0.858379, 0.895148, 0.842302,];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.0001);
     /// }
     ///
     /// ```
@@ -347,7 +306,7 @@ where
     ///
     /// let expected: [f64; 5] = [1.731, 1.643, 1.553, 1.429, 1.286];
     /// for (i, e) in expected.iter().enumerate() {
-    ///     assert_approx_eq!(e, results[i], 0.1);
+    ///     assert_approx_eq!(e, results[i], 0.001);
     /// }
     /// ```
     pub fn beta(&self) -> Option<T> {

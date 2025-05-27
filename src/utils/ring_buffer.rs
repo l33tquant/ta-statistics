@@ -1,4 +1,7 @@
+use core::cmp::Ordering;
+
 use alloc::{boxed::Box, vec::Vec};
+use num_traits::Float;
 
 /// A fixed-size, circular buffer (ring buffer) for storing a sliding window of elements.
 ///
@@ -17,6 +20,16 @@ pub struct RingBuffer<T> {
 }
 
 impl<T: Default + Copy> RingBuffer<T> {
+    /// Creates a new `RingBuffer` instance with the specified capacity.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - The capacity of the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `Self` - The `RingBuffer` instance
+    #[inline]
     pub fn new(capacity: usize) -> Self {
         let mut vec = Vec::with_capacity(capacity);
         vec.resize_with(capacity, T::default);
@@ -27,22 +40,47 @@ impl<T: Default + Copy> RingBuffer<T> {
         }
     }
 
+    /// Returns the capacity of the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The capacity of the ring buffer
     #[inline]
-    pub fn capacity(&self) -> usize {
+    pub const fn capacity(&self) -> usize {
         self.data.len()
     }
 
+    /// Returns the current number of elements stored in the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The current number of elements stored in the ring buffer
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns true if the ring buffer is full
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if the ring buffer is full
     #[inline]
-    pub fn is_full(&self) -> bool {
+    pub const fn is_full(&self) -> bool {
         self.len == self.capacity()
     }
 
-    pub fn push(&mut self, value: T) -> Option<T> {
+    /// Pushes a new value into the ring buffer, overwriting the oldest value if the buffer is full
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to push into the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The overwritten value if the buffer was full, otherwise None
+    #[inline]
+    pub const fn push(&mut self, value: T) -> Option<T> {
         let cap = self.capacity();
 
         if self.is_full() {
@@ -57,14 +95,106 @@ impl<T: Default + Copy> RingBuffer<T> {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Resets the ring buffer to its initial state
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The ring buffer object
+    #[inline]
+    pub fn reset(&mut self) -> &mut Self {
         self.index = 0;
         self.len = 0;
         self.data.fill(T::default());
+        self
     }
 
+    /// Returns an iterator over the elements in the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `impl Iterator<Item = &T>` - An iterator over the elements in the ring buffer
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         (0..self.len).map(move |i| &self.data[(self.index + i) % self.capacity()])
+    }
+
+    /// Returns an iterator over the elements in the buffer
+    ///
+    /// # Returns
+    ///
+    /// * `impl Iterator<Item = &mut T>` - An iterator over the elements in the buffer
+    #[inline]
+    pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, T> {
+        self.data.iter_mut()
+    }
+
+    /// Returns the maximum value in the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The maximum value in the ring buffer, or `None` if the ring buffer is empty
+    #[inline]
+    pub fn max(&self) -> Option<T>
+    where
+        T: Float,
+    {
+        self.data.iter().copied().reduce(T::max)
+    }
+
+    /// Returns the minimum value in the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The minimum value in the ring buffer, or `None` if the ring buffer is empty
+    #[inline]
+    pub fn min(&self) -> Option<T>
+    where
+        T: Float,
+    {
+        self.data.iter().copied().reduce(T::min)
+    }
+
+    /// Returns a slice of the elements in the buffer   .
+    ///
+    /// # Returns
+    ///
+    /// * `&[T]` - A slice of the elements in the buffer
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        self.data.as_ref()
+    }
+
+    /// Copies the elements from the slice into the buffer
+    ///
+    /// # Arguments
+    ///
+    /// * `slice` - The slice to copy from
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The ring buffer object
+    #[inline]
+    pub fn copy_from_slice(&mut self, slice: &[T])
+    where
+        T: Copy,
+    {
+        self.data.copy_from_slice(slice)
+    }
+
+    /// Sorts the elements in the buffer
+    ///
+    /// # Returns
+    ///
+    /// * `&[T]` - A slice of the sorted elements in the buffer
+    #[inline]
+    pub fn sort(&mut self) -> &[T]
+    where
+        T: PartialOrd,
+    {
+        self.data
+            .as_mut()
+            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        self.data.as_ref()
     }
 }
 

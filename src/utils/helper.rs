@@ -1,6 +1,15 @@
 use num_traits::Float;
 
 /// Returns the median from a sorted slice
+///
+/// # Arguments
+///
+/// * `ss` - The sorted slice
+///
+/// # Returns
+///
+/// * `T` - The median
+#[inline]
 pub fn median_from_sorted_slice<T: Float>(ss: &[T]) -> T {
     let len = ss.len();
     let mid = len / 2;
@@ -23,6 +32,7 @@ pub fn median_from_sorted_slice<T: Float>(ss: &[T]) -> T {
 /// # Returns
 ///
 /// * `Option<T>` - The quantile, or `None` if the slice is empty
+#[inline]
 pub fn quantile_from_sorted_slice<T: Float>(ss: &[T], q: f64, period: usize) -> Option<T> {
     let pos = q * (period as f64 - 1.0);
     let lower_index = pos.floor() as usize;

@@ -2,9 +2,17 @@ use num_traits::Float;
 
 use crate::{Kbn, RingBuffer};
 
-/// Rolling moments for online statistics
+/// This module provides functionality for calculating rolling statistical moments over a time series.
+///
+/// Rolling moments are essential statistics that help analyze the characteristics of data over
+/// a moving window. These include measures like mean, variance, skewness, and kurtosis, which
+/// provide insights into the distribution and behavior of financial time series data.
+///
+/// The implementation uses Kahan-Babuska-Neumaier summation algorithm for numerical stability
+/// when computing these statistics over potentially large datasets with floating-point values.
 #[derive(Debug, Clone)]
 pub struct RollingMoments<T> {
+    /// Statistics period
     period: usize,
     /// Ring buffer to maintain the window
     buf: RingBuffer<T>,
@@ -12,19 +20,36 @@ pub struct RollingMoments<T> {
     value: Option<T>,
     /// Most recent value popped out of the rolling window (if full).
     popped: Option<T>,
+    /// Delta Degrees of Freedom
     ddof: bool,
+    /// Sum of inputs
     sum: Kbn<T>,
+    /// Sum of squares
     sum_sq: Kbn<T>,
+    /// Sum of cubes
     sum_cube: Kbn<T>,
+    /// Sum of fourth powers
     sum_quad: Kbn<T>,
+    /// Current mean
     mean: T,
+    /// Second central moment
     m2: T,
+    /// Third central moment
     m3: T,
+    /// Fourth central moment
     m4: T,
 }
 
 impl<T: Float + Default> RollingMoments<T> {
-    /// Returns new instance for rolling moments
+    /// Creates a new `RollingMoments` instance with the specified period.
+    ///
+    /// # Arguments
+    ///
+    /// * `period` - The period of the statistics
+    ///
+    /// # Returns
+    ///
+    /// * `Self` - The statistics object
     pub fn new(period: usize) -> Self {
         Self {
             period,
@@ -43,6 +68,8 @@ impl<T: Float + Default> RollingMoments<T> {
         }
     }
 
+    /// Resets the sums
+    #[inline]
     fn reset_sums(&mut self) {
         self.sum = Kbn::default();
         self.sum_sq = Kbn::default();
@@ -50,6 +77,8 @@ impl<T: Float + Default> RollingMoments<T> {
         self.sum_quad = Kbn::default();
     }
 
+    /// Resets the moments
+    #[inline]
     fn reset_moments(&mut self) {
         self.mean = T::zero();
         self.m2 = T::zero();
@@ -57,8 +86,13 @@ impl<T: Float + Default> RollingMoments<T> {
         self.m4 = T::zero();
     }
 
+    /// Updates the central moments
+    ///
+    /// # Returns
+    ///
+    /// * `Option<()>` - `None` if the window is not full, `Some(())` otherwise
     fn update_central_moments(&mut self) -> Option<()> {
-        let n = T::from(self.buf.len()).unwrap_or(T::zero());
+        let n = T::from(self.buf.len())?;
         if n == T::zero() {
             self.reset_moments();
             return None;
@@ -90,6 +124,7 @@ impl<T: Float + Default> RollingMoments<T> {
     /// # Returns
     ///
     /// * `bool` - The Delta Degrees of Freedom
+    #[inline]
     pub const fn ddof(&self) -> bool {
         self.ddof
     }
@@ -103,12 +138,18 @@ impl<T: Float + Default> RollingMoments<T> {
     /// # Returns
     ///
     /// * `&mut Self` - The statistics object
+    #[inline]
     pub const fn set_ddof(&mut self, ddof: bool) -> &mut Self {
         self.ddof = ddof;
         self
     }
 
     /// Resets the rolling moments
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The rolling moments object
+    #[inline]
     pub fn reset(&mut self) -> &mut Self {
         self.buf.reset();
         self.value = None;
@@ -119,6 +160,16 @@ impl<T: Float + Default> RollingMoments<T> {
     }
 
     /// Updates the value to the rolling moments
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to update the rolling moments with
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The rolling moments object
+    ///
+    #[inline]
     pub fn next(&mut self, value: T) -> &mut Self {
         self.value = Some(value);
         self.popped = self.buf.push(value);
@@ -139,7 +190,13 @@ impl<T: Float + Default> RollingMoments<T> {
         self
     }
 
-    /// Recomputes the rolling statistics, could be called to avoid prolonged compounding of floating rounding errors
+    /// Recomputes the rolling statistics, could be called to avoid
+    /// prolonged compounding of floating rounding errors
+    ///
+    /// # Returns
+    ///
+    /// * `&mut Self` - The rolling moments object
+    #[inline]
     pub fn recompute(&mut self) {
         self.reset_sums();
 
@@ -153,44 +210,134 @@ impl<T: Float + Default> RollingMoments<T> {
         self.update_central_moments();
     }
 
+    /// Returns the value that was removed from the window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The value that was removed from the window
+    pub const fn popped(&self) -> Option<T> {
+        self.popped
+    }
+
+    /// Returns the value that was added to the window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The value that was added to the window
+    pub const fn value(&self) -> Option<T> {
+        self.value
+    }
+
+    /// Returns the maximum value in the ring buffer
+    #[inline]
+    pub fn max(&self) -> Option<T> {
+        self.buf.max()
+    }
+
+    /// Returns the minimum value in the ring buffer    
+    #[inline]
+    pub fn min(&self) -> Option<T> {
+        self.buf.min()
+    }
+
     /// Returns the window period
-    pub fn period(&self) -> usize {
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The window period
+    #[inline]
+    pub const fn period(&self) -> usize {
         self.period
     }
 
     /// Returns true of the calculation was ready
-    pub fn is_ready(&self) -> bool {
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if the calculation was ready
+    #[inline]
+    pub const fn is_ready(&self) -> bool {
         self.buf.is_full()
     }
 
     /// Returns the number of elements in the buffer
-    pub fn count(&self) -> usize {
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The number of elements in the buffer
+    #[inline]
+    pub const fn count(&self) -> usize {
         self.buf.len()
     }
 
+    /// Returns an iterator over the elements in the ring buffer
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.buf.iter()
+    }
+
+    /// Returns a slice of the elements in the buffer
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        self.buf.as_slice()
+    }
+
     /// Returns the sum of all values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The sum of all values if the window is ready, None otherwise
+    #[inline]
     pub fn sum(&self) -> Option<T> {
         self.is_ready().then_some(self.sum.total())
     }
 
     /// Returns the sum of squares of all values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The sum of squares of all values if the window is ready, None otherwise
+    #[inline]
     pub fn sum_sq(&self) -> Option<T> {
         self.is_ready().then_some(self.sum_sq.total())
     }
 
     /// Returns the mean of all values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The mean of all values if the window is ready, None otherwise
+    #[inline]
     pub fn mean(&self) -> Option<T> {
         self.is_ready().then_some(self.mean)
     }
 
     /// Returns the mean of squared values in the rolling window
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The mean of squared values if the window is ready, None otherwise
+    #[inline]
     pub fn mean_sq(&self) -> Option<T> {
         self.sum_sq()
             .zip(T::from(self.count()))
             .map(|(ss, n)| ss / n)
     }
 
-    /// Returns the rolling variance
+    /// Returns the variance of values in the rolling window
+    ///
+    /// Variance quantifies the dispersion of data points around the mean,
+    /// providing essential volatility measurement for financial time series:
+    ///
+    /// - Serves as the foundation for volatility-based position sizing
+    /// - Enables normalization of returns for cross-asset comparison
+    /// - Provides critical input for statistical arbitrage models
+    /// - Forms the basis for numerous technical indicators like Bollinger Bands
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The variance, or `None` if the window is not full
+    #[inline]
     pub fn variance(&self) -> Option<T> {
         if !self.is_ready() {
             return None;
@@ -204,8 +351,21 @@ impl<T: Float + Default> RollingMoments<T> {
         }
     }
 
-    /// Returns the rolling standard deviation
-    pub fn std_dev(&self) -> Option<T> {
+    /// Returns the standard deviation of values in the rolling window
+    ///
+    /// Standard deviation quantifies the dispersion of data points around the mean,
+    /// providing essential volatility measurement for financial time series:
+    ///
+    /// - Serves as the foundation for volatility-based position sizing
+    /// - Enables normalization of returns for cross-asset comparison
+    /// - Provides critical input for statistical arbitrage models
+    /// - Forms the basis for numerous technical indicators like Bollinger Bands
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The standard deviation, or `None` if the window is not full
+    #[inline]
+    pub fn stddev(&self) -> Option<T> {
         self.variance().and_then(|var| {
             if var >= T::zero() {
                 Some(var.sqrt())
@@ -215,20 +375,39 @@ impl<T: Float + Default> RollingMoments<T> {
         })
     }
 
-    /// Returns the Zscore
+    /// Returns the Zscore of the most recent value
+    ///
+    /// Zscore measures the number of standard deviations a value is from the mean.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The Zscore if the window is ready and standard deviation is positive, None otherwise
+    #[inline]
     pub fn zscore(&self) -> Option<T> {
         let value = self.value?;
         let mean = self.mean()?;
-        let std_dev = self.std_dev()?;
+        let stddev = self.stddev()?;
 
-        if std_dev > T::zero() {
-            Some((value - mean) / std_dev)
+        if stddev > T::zero() {
+            Some((value - mean) / stddev)
         } else {
             None
         }
     }
 
-    /// Returns the skewness
+    /// Returns the skewness of values in the rolling window
+    ///
+    /// Skewness measures the asymmetry of the distribution of values.
+    /// - Positive values indicate a right-skewed distribution (long tail on the right)
+    /// - Negative values indicate a left-skewed distribution (long tail on the left)
+    /// - A normal distribution has a skewness of 0
+    ///
+    /// When `ddof` is true, applies a bias correction for sample skewness.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The skewness if the window is ready and variance is positive, None otherwise
+    #[inline]
     pub fn skew(&self) -> Option<T> {
         if !self.is_ready() || self.m2 <= T::zero() {
             return None;
@@ -255,11 +434,20 @@ impl<T: Float + Default> RollingMoments<T> {
         }
     }
 
-    /// Returns the kurtosis
-    pub fn kurt(&self) -> Option<T>
-    where
-        T: core::fmt::Debug,
-    {
+    /// Returns the excess kurtosis of values in the rolling window
+    ///
+    /// Excess kurtosis measures the "tailedness" of a distribution compared to a normal distribution.
+    /// - Positive values indicate a distribution with heavier tails (more outliers)
+    /// - Negative values indicate a distribution with lighter tails (fewer outliers)
+    /// - A normal distribution has an excess kurtosis of 0
+    ///
+    /// When `ddof` is true, applies a bias correction for sample kurtosis.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<T>` - The excess kurtosis if the window is ready and variance is positive, None otherwise
+    #[inline]
+    pub fn kurt(&self) -> Option<T> {
         if !self.is_ready() || self.m2 <= T::zero() {
             return None;
         }
@@ -431,12 +619,12 @@ mod tests {
     }
 
     #[test]
-    fn std_dev_works() {
+    fn stddev_works() {
         let mut stats = RollingMoments::new(3);
         let mut results = vec![];
         let inputs = [25.4, 26.2, 26.0, 26.1, 25.8, 25.9, 26.3, 26.2, 26.5];
         inputs.iter().for_each(|i| {
-            if let Some(v) = stats.next(*i).std_dev() {
+            if let Some(v) = stats.next(*i).stddev() {
                 results.push(v)
             }
         });
@@ -449,7 +637,7 @@ mod tests {
         stats.reset().set_ddof(true);
         results = vec![];
         inputs.iter().for_each(|i| {
-            if let Some(v) = stats.next(*i).std_dev() {
+            if let Some(v) = stats.next(*i).stddev() {
                 results.push(v)
             }
         });
