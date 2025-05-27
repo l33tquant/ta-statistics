@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(
     unsafe_code,
     unused_imports,
@@ -21,7 +21,10 @@ extern crate alloc;
 pub(crate) type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
 mod utils;
-pub(crate) use utils::{Window, helper};
+pub(crate) use utils::{RingBuffer, Window, helper};
+
+mod rolling_moments;
+pub use rolling_moments::RollingMoments;
 
 mod single_statistics;
 pub use single_statistics::SingleStatistics;
