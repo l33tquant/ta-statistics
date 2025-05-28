@@ -1,6 +1,6 @@
 [package]
 name = "ta-statistics"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 
 authors = ["Dhruv Soi<l33t.quant@gmail.com>"]
@@ -20,6 +20,18 @@ categories = ["algorithms", "finance", "mathematics"]
 
 [dependencies.compensated-summation]
 version = "0.3.1"
+
+[dependencies.ordered-float]
+version = "5.0"
+
+[dependencies.ahash]
+version = "0.8"
+default-features = false
+features = ["runtime-rng"]
+
+[dependencies.hashbrown]
+version = "0.15.2"
+default-features = false
 
 [dependencies.num-traits]
 version = "0.2"

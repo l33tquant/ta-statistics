@@ -1,9 +1,11 @@
 use num_traits::Float;
+use ordered_float::PrimitiveFloat;
 
 use core::iter::Sum;
 
 use crate::{
     PairedStatistics,
+    rolling_mode::RollingMode,
     rolling_moments::RollingMoments,
     utils::{
         RingBuffer,
@@ -33,11 +35,13 @@ pub struct SingleStatistics<T> {
     max: Option<T>,
     /// Maximum drawdown
     max_drawdown: Option<T>,
+    /// Mode
+    mode: RollingMode<T>,
 }
 
 impl<T> SingleStatistics<T>
 where
-    T: Default + Clone + Float,
+    T: Default + Clone + Float + PrimitiveFloat,
 {
     /// Creates a new `SingleStatistics` instance with the specified period.
     ///
@@ -55,6 +59,7 @@ where
             min: None,
             max: None,
             max_drawdown: None,
+            mode: RollingMode::new(),
         }
     }
 
@@ -78,6 +83,7 @@ where
         self.min = None;
         self.max = None;
         self.max_drawdown = None;
+        self.mode.reset();
         self
     }
 
@@ -151,6 +157,11 @@ where
     /// * `&mut Self` - The statistics object
     pub fn next(&mut self, value: T) -> &mut Self {
         self.moments.next(value);
+        if let Some(popped) = self.moments.popped() {
+            self.mode.pop(popped);
+        }
+        self.mode.push(value);
+
         self
     }
 
@@ -291,7 +302,8 @@ where
         self.moments.mean_sq()
     }
 
-    /// Returns the mode (most frequently occurring value) in the rolling window
+    /// Returns the mode (most frequently occurring value) in the rolling window.
+    /// Returns None if there was no mode and smallest value incase of a tie.
     ///
     /// The mode identifies the most common value within a distribution, providing
     /// insight into clustering behavior and prevalent conditions:
@@ -325,33 +337,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-
-        let slice = self.sorted_buf();
-
-        let mut mode = slice[0];
-        let mut mode_count = 1;
-
-        let mut current = slice[0];
-        let mut current_count = 1;
-
-        for &value in &slice[1..] {
-            if value == current {
-                current_count += 1;
-            } else {
-                if current_count > mode_count || (current_count == mode_count && current < mode) {
-                    mode = current;
-                    mode_count = current_count;
-                }
-                current = value;
-                current_count = 1;
-            }
-        }
-
-        if current_count > mode_count || (current_count == mode_count && current < mode) {
-            mode = current;
-        }
-
-        Some(mode)
+        self.mode.mode()
     }
 
     /// Returns the median (middle value) of the rolling window
@@ -510,7 +496,11 @@ where
         T: Sum,
     {
         let mean = self.mean()?;
-        let abs_sum = self.moments.iter().map(|&x| (x - mean).abs()).sum::<T>();
+        let abs_sum = self
+            .moments
+            .iter()
+            .map(|&x| Float::abs(x - mean))
+            .sum::<T>();
         self.period_t().map(|n| abs_sum / n)
     }
 
@@ -551,7 +541,7 @@ where
         self.sorted_buf
             .iter_mut()
             .zip(self.moments.as_slice())
-            .for_each(|(dev, &x)| *dev = (x - median).abs());
+            .for_each(|(dev, &x)| *dev = Float::abs(x - median));
 
         Some(median_from_sorted_slice(self.sorted_buf.sort()))
     }
@@ -1029,7 +1019,7 @@ where
             if max <= T::zero() || input <= T::zero() {
                 T::zero()
             } else {
-                ((max - input) / max).max(T::zero())
+                Float::max((max - input) / max, T::zero())
             }
         })
     }
@@ -1069,7 +1059,7 @@ where
     pub fn max_drawdown(&mut self) -> Option<T> {
         let drawdown = self.drawdown()?;
         self.max_drawdown = match self.max_drawdown {
-            Some(md) => Some(md.max(drawdown)),
+            Some(md) => Some(Float::max(md, drawdown)),
             None => Some(drawdown),
         };
         self.max_drawdown

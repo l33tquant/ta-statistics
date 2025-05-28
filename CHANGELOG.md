@@ -1,3 +1,7 @@
+## v0.2.3 (May 28, 2025)
+
+- Optimized mode with O(1) lookup and amortized O(1) insertion/removal time using frequency bucket
+
 ## v0.2.2 (May 28, 2025)
 
 - Optimized min and max with O(1) lookup and amortized O(1) insertion time using monotonic queue data structure

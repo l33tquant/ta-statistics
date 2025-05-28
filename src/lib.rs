@@ -22,6 +22,7 @@ type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
 mod utils;
 
+mod rolling_mode;
 mod rolling_moments;
 
 mod single_statistics;
