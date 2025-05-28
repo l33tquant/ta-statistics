@@ -1,7 +1,6 @@
 use core::cmp::Ordering;
 
 use alloc::{boxed::Box, vec::Vec};
-use num_traits::Float;
 
 /// A fixed-size, circular buffer (ring buffer) for storing a sliding window of elements.
 ///
@@ -85,7 +84,7 @@ impl<T: Default + Copy> RingBuffer<T> {
 
         if self.is_full() {
             let overwritten = core::mem::replace(&mut self.data[self.index], value);
-            self.index = (self.index + 1) % cap; // move head forward
+            self.index = (self.index + 1) % cap;
             Some(overwritten)
         } else {
             let insert_at = (self.index + self.len) % cap;
@@ -126,32 +125,6 @@ impl<T: Default + Copy> RingBuffer<T> {
     #[inline]
     pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, T> {
         self.data.iter_mut()
-    }
-
-    /// Returns the maximum value in the ring buffer
-    ///
-    /// # Returns
-    ///
-    /// * `Option<T>` - The maximum value in the ring buffer, or `None` if the ring buffer is empty
-    #[inline]
-    pub fn max(&self) -> Option<T>
-    where
-        T: Float,
-    {
-        self.data.iter().copied().reduce(T::max)
-    }
-
-    /// Returns the minimum value in the ring buffer
-    ///
-    /// # Returns
-    ///
-    /// * `Option<T>` - The minimum value in the ring buffer, or `None` if the ring buffer is empty
-    #[inline]
-    pub fn min(&self) -> Option<T>
-    where
-        T: Float,
-    {
-        self.data.iter().copied().reduce(T::min)
     }
 
     /// Returns a slice of the elements in the buffer   .

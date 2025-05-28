@@ -3,8 +3,12 @@ use num_traits::Float;
 use core::iter::Sum;
 
 use crate::{
-    PairedStatistics, RingBuffer, RollingMoments,
-    helper::{median_from_sorted_slice, quantile_from_sorted_slice},
+    PairedStatistics,
+    rolling_moments::RollingMoments,
+    utils::{
+        RingBuffer,
+        helper::{median_from_sorted_slice, quantile_from_sorted_slice},
+    },
 };
 
 /// A structure that computes various statistics over a fixed-size window of values.
@@ -396,6 +400,10 @@ where
     /// - Sets critical risk boundaries for position management systems
     /// - Provides baseline scenarios for stress-testing and risk modeling
     ///
+    /// Uses a monotonic queue data structure to efficiently track the minimum value,
+    /// offering O(1) time complexity for lookups and amortized O(1) time complexity for
+    /// insertions and deletions, making it highly efficient for rolling window calculations.
+    ///
     /// # Returns
     ///
     /// * `Option<T>` - The minimum value in the window, or `None` if the window is not full
@@ -420,20 +428,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-
-        self.min = match self.min {
-            None => self.moments.min(),
-            Some(min) => {
-                if self.moments.popped() == Some(min) {
-                    self.moments.min()
-                } else if self.moments.value() < Some(min) {
-                    self.moments.value()
-                } else {
-                    Some(min)
-                }
-            }
-        };
-        self.min
+        self.moments.min()
     }
 
     /// Returns the maximum value in the rolling window
@@ -445,6 +440,10 @@ where
     /// - Optimizes profit-taking thresholds based on historical precedent
     /// - Confirms genuine breakouts from established trading ranges
     /// - Defines upper boundaries for range-bound trading approaches
+    ///
+    /// Uses a monotonic queue data structure to efficiently track the maximum value, offering
+    /// O(1) time complexity for lookups and amortized O(1) time complexity for insertions and
+    /// deletions, making it highly efficient for rolling window calculations.
     ///
     /// # Returns
     ///
@@ -471,20 +470,7 @@ where
             return None;
         }
 
-        self.max = match self.max {
-            None => self.moments.max(),
-            Some(max) => {
-                if self.moments.popped() == Some(max) {
-                    self.moments.max()
-                } else if self.moments.value() > Some(max) {
-                    self.moments.value()
-                } else {
-                    Some(max)
-                }
-            }
-        };
-
-        self.max
+        self.moments.max()
     }
 
     /// Returns the mean absolute deviation of values in the rolling window

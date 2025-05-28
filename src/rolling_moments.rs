@@ -1,6 +1,8 @@
 use num_traits::Float;
 
-use crate::{Kbn, RingBuffer};
+use crate::utils::{Max, Min, MonotonicQueue, RingBuffer};
+
+type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
 /// This module provides functionality for calculating rolling statistical moments over a time series.
 ///
@@ -38,6 +40,10 @@ pub struct RollingMoments<T> {
     m3: T,
     /// Fourth central moment
     m4: T,
+    /// Minimum
+    min: MonotonicQueue<T, Min>,
+    /// Maximum
+    max: MonotonicQueue<T, Max>,
 }
 
 impl<T: Float + Default> RollingMoments<T> {
@@ -65,6 +71,8 @@ impl<T: Float + Default> RollingMoments<T> {
             m2: T::zero(),
             m3: T::zero(),
             m4: T::zero(),
+            min: MonotonicQueue::new(period),
+            max: MonotonicQueue::new(period),
         }
     }
 
@@ -156,6 +164,8 @@ impl<T: Float + Default> RollingMoments<T> {
         self.popped = None;
         self.reset_sums();
         self.reset_moments();
+        self.min.reset();
+        self.max.reset();
         self
     }
 
@@ -186,7 +196,8 @@ impl<T: Float + Default> RollingMoments<T> {
         self.sum_quad += value * value * value * value;
 
         self.update_central_moments();
-
+        self.min.push(value);
+        self.max.push(value);
         self
     }
 
@@ -231,13 +242,13 @@ impl<T: Float + Default> RollingMoments<T> {
     /// Returns the maximum value in the ring buffer
     #[inline]
     pub fn max(&self) -> Option<T> {
-        self.buf.max()
+        self.max.front()
     }
 
     /// Returns the minimum value in the ring buffer    
     #[inline]
     pub fn min(&self) -> Option<T> {
-        self.buf.min()
+        self.min.front()
     }
 
     /// Returns the window period

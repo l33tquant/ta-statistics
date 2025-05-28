@@ -78,6 +78,7 @@ stats.next((105.43, 23.67)).corr();
 - Memory usage is proportional to the window size
 - Delta Degrees of Freedom correction can be applied with `set_ddof(true)` for sample statistics
 - Uses KahanBabuskaNeumaier algorithm for compensated summation to prevent catastrophic cancellation in floating-point operations, ensuring numerical stability in rolling calculations
+- Min and max are optimized with O(1) lookup and amortized O(1) insertion time using monotonic queue data structure
 
 ## Example: Real-time Volatility Analysis
 

@@ -1,3 +1,7 @@
+## v0.2.2 (May 28, 2025)
+
+- Optimized min and max with O(1) lookup and amortized O(1) insertion time using monotonic queue data structure
+
 ## v0.2.1 (May 27, 2025)
 
 - Added recompute to both statistics

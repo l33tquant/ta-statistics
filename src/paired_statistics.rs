@@ -1,6 +1,6 @@
 use num_traits::Float;
 
-use crate::{Kbn, RollingMoments};
+use crate::{Kbn, rolling_moments::RollingMoments};
 
 /// A structure that computes various statistics over a fixed-size window of paired values.
 ///
