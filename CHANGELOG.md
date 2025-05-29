@@ -1,3 +1,7 @@
+## v0.2.4 (May 29, 2025)
+
+- Optimized median with O(log n) time complexity for insertions and deletions, and O(1) median access using two balanced heaps with lazy deletions
+
 ## v0.2.3 (May 28, 2025)
 
 - Optimized mode with O(1) lookup and amortized O(1) insertion/removal time using frequency bucket
