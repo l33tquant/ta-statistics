@@ -75,10 +75,12 @@ stats.next((105.43, 23.67)).corr();
 
 ## Performance Considerations
 
-- Memory usage is proportional to the window size
+- Memory usage is proportional to the window size, with additional overhead from specialized data structures that enable the performance optimizations - this trade-off between memory and speed is designed to prioritize computational efficiency for real-time applications
 - Delta Degrees of Freedom correction can be applied with `set_ddof(true)` for sample statistics
 - Uses KahanBabuskaNeumaier algorithm for compensated summation to prevent catastrophic cancellation in floating-point operations, ensuring numerical stability in rolling calculations
 - Min and max are optimized with O(1) lookup and amortized O(1) insertion time using monotonic queue data structure
+- Mode is optimized with O(1) lookup and amortized O(1) insertion time using frequency bucket data structure
+- Median is optimized with O(log n) time complexity for insertions and deletions, and O(1) median access using two balanced heaps with lazy deletions
 
 ## Example: Real-time Volatility Analysis
 

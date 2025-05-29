@@ -1,7 +1,7 @@
 use ahash::RandomState;
 use hashbrown::{HashMap, HashSet};
 use num_traits::Float;
-use ordered_float::{FloatCore, OrderedFloat, PrimitiveFloat};
+use ordered_float::{OrderedFloat, PrimitiveFloat};
 
 use alloc::vec::Vec;
 
@@ -33,7 +33,7 @@ pub struct RollingMode<T> {
 
 impl<T> RollingMode<T>
 where
-    T: Float + FloatCore + PrimitiveFloat,
+    T: Float + PrimitiveFloat,
 {
     /// Creates a new instance of the `RollingMode` structure.
     ///

@@ -5,10 +5,9 @@ use core::iter::Sum;
 
 use crate::{
     PairedStatistics,
-    rolling_mode::RollingMode,
-    rolling_moments::RollingMoments,
+    rolling::{RollingMedian, RollingMode, RollingMoments},
     utils::{
-        RingBuffer,
+        Max, Min, MonotonicQueue, RingBuffer,
         helper::{median_from_sorted_slice, quantile_from_sorted_slice},
     },
 };
@@ -29,14 +28,16 @@ pub struct SingleStatistics<T> {
     moments: RollingMoments<T>,
     /// Fixed buffer for sorting on demand
     sorted_buf: RingBuffer<T>,
-    /// Current minimum value
-    min: Option<T>,
-    /// Current maximum value
-    max: Option<T>,
+    /// Minimum
+    min: MonotonicQueue<T, Min>,
+    /// Maximum
+    max: MonotonicQueue<T, Max>,
     /// Maximum drawdown
     max_drawdown: Option<T>,
     /// Mode
     mode: RollingMode<T>,
+    /// Median
+    median: RollingMedian<T>,
 }
 
 impl<T> SingleStatistics<T>
@@ -56,10 +57,11 @@ where
         Self {
             moments: RollingMoments::new(period),
             sorted_buf: RingBuffer::new(period),
-            min: None,
-            max: None,
+            min: MonotonicQueue::new(period),
+            max: MonotonicQueue::new(period),
             max_drawdown: None,
             mode: RollingMode::new(),
+            median: RollingMedian::new(period),
         }
     }
 
@@ -80,10 +82,11 @@ where
     pub fn reset(&mut self) -> &mut Self {
         self.moments.reset();
         self.sorted_buf.reset();
-        self.min = None;
-        self.max = None;
+        self.min.reset();
+        self.max.reset();
         self.max_drawdown = None;
         self.mode.reset();
+        self.median.reset();
         self
     }
 
@@ -159,8 +162,12 @@ where
         self.moments.next(value);
         if let Some(popped) = self.moments.popped() {
             self.mode.pop(popped);
+            self.median.pop(popped);
         }
+        self.min.push(value);
+        self.max.push(value);
         self.mode.push(value);
+        self.median.push(value);
 
         self
     }
@@ -302,8 +309,7 @@ where
         self.moments.mean_sq()
     }
 
-    /// Returns the mode (most frequently occurring value) in the rolling window.
-    /// Returns None if there was no mode and smallest value incase of a tie.
+    /// Returns the mode (most frequently occurring value) in the rolling window
     ///
     /// The mode identifies the most common value within a distribution, providing
     /// insight into clustering behavior and prevalent conditions:
@@ -312,6 +318,12 @@ where
     /// - Detects clustering in volume or activity patterns
     /// - Provides non-parametric central tendency alternative to mean/median
     /// - Highlights dominant price levels where transactions concentrate
+    ///
+    /// Uses a frequency bucket data structure to efficiently track value frequencies, offering
+    /// O(1) time complexity for lookups and amortized O(1) time complexity for insertions and
+    /// deletions, making it highly efficient for rolling window calculations.
+    ///
+    /// In case of ties (multiple values with the same highest frequency), returns the smallest value.
     ///
     /// # Returns
     ///
@@ -340,7 +352,8 @@ where
         self.mode.mode()
     }
 
-    /// Returns the median (middle value) of the rolling window
+    /// Returns the median (middle value) of the rolling window using two balanced heaps to
+    /// ensure O(log n) time complexity for insertions and deletions, and O(1) median access.
     ///
     /// The median represents the central value when data is sorted, providing a robust
     /// measure of central tendency that's less affected by outliers than the mean:
@@ -348,7 +361,7 @@ where
     /// - Offers resilient central price estimation in volatile conditions
     /// - Establishes more stable reference points during extreme events
     /// - Provides core input for non-parametric statistical models
-    /// - Creates baseline for interquartile range and other robust dispersion measures
+    /// - Serves as a foundation for technical indicators like median-based envelopes
     ///
     /// # Returns
     ///
@@ -371,9 +384,10 @@ where
     /// assert_eq!(&results, &expected);
     /// ```
     pub fn median(&mut self) -> Option<T> {
-        self.moments
-            .is_ready()
-            .then_some(median_from_sorted_slice(self.sorted_buf()))
+        if !self.moments.is_ready() {
+            return None;
+        }
+        self.median.median()
     }
 
     /// Returns the minimum value in the rolling window
@@ -414,7 +428,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-        self.moments.min()
+        self.min.front()
     }
 
     /// Returns the maximum value in the rolling window
@@ -455,8 +469,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-
-        self.moments.max()
+        self.max.front()
     }
 
     /// Returns the mean absolute deviation of values in the rolling window

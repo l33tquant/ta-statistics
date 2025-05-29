@@ -1,6 +1,6 @@
 [package]
 name = "ta-statistics"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 
 authors = ["Dhruv Soi<l33t.quant@gmail.com>"]
@@ -18,6 +18,11 @@ keywords = [
 ]
 categories = ["algorithms", "finance", "mathematics"]
 
+[dependencies.num-traits]
+version = "0.2"
+default-features = false
+features = ["libm"]
+
 [dependencies.compensated-summation]
 version = "0.3.1"
 
@@ -32,11 +37,6 @@ features = ["runtime-rng"]
 [dependencies.hashbrown]
 version = "0.15.2"
 default-features = false
-
-[dependencies.num-traits]
-version = "0.2"
-default-features = false
-features = ["libm"]
 
 [dev-dependencies.assert_approx_eq]
 version = "1.1"

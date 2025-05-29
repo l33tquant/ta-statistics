@@ -18,12 +18,8 @@
 #[macro_use]
 extern crate alloc;
 
-type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
-
+mod rolling;
 mod utils;
-
-mod rolling_mode;
-mod rolling_moments;
 
 mod single_statistics;
 pub use single_statistics::SingleStatistics;
