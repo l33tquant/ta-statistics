@@ -772,10 +772,8 @@ impl<T: FloatCore + Copy> RbTree<T> {
 
         let node_ref = self.node_at(node);
 
-        if self.is_red(node) {
-            if !self.is_black(node_ref.left) || !self.is_black(node_ref.right) {
-                return None;
-            }
+        if self.is_red(node) && (!self.is_black(node_ref.left) || !self.is_black(node_ref.right)) {
+            return None;
         }
 
         let left_height = self.verify_black_height(node_ref.left)?;
@@ -798,16 +796,22 @@ impl<T: FloatCore + Copy> RbTree<T> {
         }
 
         let median = self.median()?;
+        let mut deviations: Vec<OrderedFloat<T>> = Vec::with_capacity(self.total_count);
 
-        let mut deviations = Vec::with_capacity(self.total_count);
-        self.collect_deviations_to_vec(self.root, median, &mut deviations);
+        self.collect_absolute_deviations(self.root, median, &mut deviations);
 
-        deviations.sort_unstable_by(|&a, b| a.partial_cmp(b).unwrap());
+        deviations.sort_unstable();
+
         let mid = deviations.len() / 2;
-        Some(deviations[mid])
+        Some(deviations[mid].into_inner())
     }
 
-    fn collect_deviations_to_vec(&self, node_idx: usize, median: T, deviations: &mut Vec<T>) {
+    fn collect_absolute_deviations(
+        &self,
+        node_idx: usize,
+        median: T,
+        deviations: &mut Vec<OrderedFloat<T>>,
+    ) {
         if node_idx == self.nil {
             return;
         }
@@ -816,12 +820,14 @@ impl<T: FloatCore + Copy> RbTree<T> {
         let value = node.value.into_inner();
         let deviation = (value - median).abs();
 
+        let ordered_deviation = OrderedFloat(deviation);
+
         for _ in 0..node.count {
-            deviations.push(deviation);
+            deviations.push(ordered_deviation);
         }
 
-        self.collect_deviations_to_vec(node.left, median, deviations);
-        self.collect_deviations_to_vec(node.right, median, deviations);
+        self.collect_absolute_deviations(node.left, median, deviations);
+        self.collect_absolute_deviations(node.right, median, deviations);
     }
 
     pub fn mean_absolute_deviation(&self, mean: T) -> Option<T> {
@@ -857,6 +863,7 @@ impl<T: FloatCore + Copy> RbTree<T> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::all)]
 mod tests {
     use super::*;
 
