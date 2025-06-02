@@ -1,3 +1,8 @@
+## v0.2.5 (Jun 2, 2025)
+
+- Implemented a Red-Black Tree data structure with minimal unsafe code to efficiently compute median, quantiles, and interquartile range (IQR) with O(log n) time complexity for insertions, deletions, and lookups. Refactored Median/Mean Absolute Deviation (MAD) calculation from slice-based approach to Red-Black Tree implementation with O(n) complexity
+- Minor refactoring and optimizations
+
 ## v0.2.4 (May 29, 2025)
 
 - Optimized median with O(log n) time complexity for insertions and deletions, and O(1) median access using two balanced heaps with lazy deletions

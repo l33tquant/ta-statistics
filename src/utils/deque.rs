@@ -171,7 +171,7 @@ where
     ///
     /// * `Option<&T>` - A reference to the front element of the deque, if it exists
     #[inline]
-    pub fn front(&self) -> Option<&T> {
+    pub const fn front(&self) -> Option<&T> {
         self.get(0)
     }
 
@@ -182,7 +182,7 @@ where
     /// # Returns
     ///
     /// * `Option<&T>` - A reference to the back element of the deque, if it exists
-    pub fn back(&self) -> Option<&T> {
+    pub const fn back(&self) -> Option<&T> {
         if self.is_empty() {
             None
         } else {
@@ -207,7 +207,7 @@ where
     ///
     /// * `Option<&T>` - A reference to the element at the specified index, if it exists
     #[inline]
-    pub fn get(&self, i: usize) -> Option<&T> {
+    pub const fn get(&self, i: usize) -> Option<&T> {
         if i >= self.len {
             None
         } else {
@@ -229,13 +229,17 @@ where
     /// * `Option<&mut T>` - A mutable reference to the element at the specified index, if it exists
     #[inline]
     #[allow(dead_code)]
-    pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
+    pub const fn get_mut(&mut self, i: usize) -> Option<&mut T> {
         if i >= self.len {
             None
         } else {
             let idx = (self.front + i) % self.cap;
             Some(&mut self.buf[idx])
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        (0..self.len).map(move |i| &self.buf[(self.front + i) % self.cap])
     }
 }
 

@@ -5,11 +5,8 @@ use core::iter::Sum;
 
 use crate::{
     PairedStatistics,
-    rolling::{RollingMedian, RollingMode, RollingMoments},
-    utils::{
-        Max, Min, MonotonicQueue, RingBuffer,
-        helper::{median_from_sorted_slice, quantile_from_sorted_slice},
-    },
+    rolling::{RollingMode, RollingMoments},
+    utils::{Max, Min, MonotonicQueue, RbTree},
 };
 
 /// A structure that computes various statistics over a fixed-size window of values.
@@ -22,12 +19,10 @@ use crate::{
 ///
 /// The structure is particularly useful for technical analysis, risk management,
 /// and alpha generation in quantitative trading strategies.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SingleStatistics<T> {
     /// Rolling moments
     moments: RollingMoments<T>,
-    /// Fixed buffer for sorting on demand
-    sorted_buf: RingBuffer<T>,
     /// Minimum
     min: MonotonicQueue<T, Min>,
     /// Maximum
@@ -36,8 +31,8 @@ pub struct SingleStatistics<T> {
     max_drawdown: Option<T>,
     /// Mode
     mode: RollingMode<T>,
-    /// Median
-    median: RollingMedian<T>,
+    /// Median/Quantile/Percentile/IQR/MAD
+    rb_tree: RbTree<T>,
 }
 
 impl<T> SingleStatistics<T>
@@ -56,12 +51,11 @@ where
     pub fn new(period: usize) -> Self {
         Self {
             moments: RollingMoments::new(period),
-            sorted_buf: RingBuffer::new(period),
             min: MonotonicQueue::new(period),
             max: MonotonicQueue::new(period),
             max_drawdown: None,
             mode: RollingMode::new(),
-            median: RollingMedian::new(period),
+            rb_tree: RbTree::new(period),
         }
     }
 
@@ -81,12 +75,11 @@ where
     /// * `&mut Self` - The statistics object
     pub fn reset(&mut self) -> &mut Self {
         self.moments.reset();
-        self.sorted_buf.reset();
         self.min.reset();
         self.max.reset();
         self.max_drawdown = None;
         self.mode.reset();
-        self.median.reset();
+        self.rb_tree.reset();
         self
     }
 
@@ -106,15 +99,6 @@ where
         T: Float,
     {
         T::from(self.period())
-    }
-
-    // Copies and sorts the buf
-    fn sorted_buf(&mut self) -> &[T]
-    where
-        T: Copy + Default + PartialOrd,
-    {
-        self.sorted_buf.copy_from_slice(self.moments.as_slice());
-        self.sorted_buf.sort()
     }
 
     /// Returns the Delta Degrees of Freedom
@@ -162,12 +146,12 @@ where
         self.moments.next(value);
         if let Some(popped) = self.moments.popped() {
             self.mode.pop(popped);
-            self.median.pop(popped);
+            self.rb_tree.remove(popped);
         }
         self.min.push(value);
         self.max.push(value);
         self.mode.push(value);
-        self.median.push(value);
+        self.rb_tree.insert(value);
 
         self
     }
@@ -387,7 +371,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-        self.median.median()
+        self.rb_tree.median()
     }
 
     /// Returns the minimum value in the rolling window
@@ -509,12 +493,7 @@ where
         T: Sum,
     {
         let mean = self.mean()?;
-        let abs_sum = self
-            .moments
-            .iter()
-            .map(|&x| Float::abs(x - mean))
-            .sum::<T>();
-        self.period_t().map(|n| abs_sum / n)
+        self.rb_tree.mean_absolute_deviation(mean)
     }
 
     /// Returns the median absolute deviation of values in the rolling window
@@ -550,13 +529,10 @@ where
     ///
     /// ```
     pub fn median_absolute_deviation(&mut self) -> Option<T> {
-        let median = self.median()?;
-        self.sorted_buf
-            .iter_mut()
-            .zip(self.moments.as_slice())
-            .for_each(|(dev, &x)| *dev = Float::abs(x - median));
-
-        Some(median_from_sorted_slice(self.sorted_buf.sort()))
+        if !self.moments.is_ready() {
+            return None;
+        }
+        self.rb_tree.median_absolute_deviation()
     }
 
     /// Returns the variance of values in the rolling window
@@ -1237,9 +1213,7 @@ where
         if !self.moments.is_ready() || !(0.0..=1.0).contains(&q) {
             return None;
         }
-        let period = self.period();
-        let sorted = self.sorted_buf();
-        quantile_from_sorted_slice(sorted, q, period)
+        self.rb_tree.quantile(q)
     }
 
     /// Returns the interquartile range of the values in the window
@@ -1271,11 +1245,8 @@ where
             return None;
         }
 
-        let period = self.period();
-        let sorted = self.sorted_buf();
-
-        let q1 = quantile_from_sorted_slice(sorted, 0.25, period);
-        let q3 = quantile_from_sorted_slice(sorted, 0.75, period);
+        let q1 = self.rb_tree.quantile(0.25);
+        let q3 = self.rb_tree.quantile(0.75);
 
         q1.zip(q3).map(|(q1, q3)| q3 - q1)
     }

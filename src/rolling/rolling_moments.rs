@@ -1,6 +1,6 @@
 use num_traits::Float;
 
-use crate::utils::RingBuffer;
+use crate::utils::Deque;
 
 type Kbn<T> = compensated_summation::KahanBabuskaNeumaier<T>;
 
@@ -17,7 +17,7 @@ pub struct RollingMoments<T> {
     /// Statistics period
     period: usize,
     /// Ring buffer to maintain the window
-    buf: RingBuffer<T>,
+    buf: Deque<T>,
     /// Most recent value pushed into the rolling window.
     value: Option<T>,
     /// Most recent value popped out of the rolling window (if full).
@@ -55,7 +55,7 @@ impl<T: Float + Default> RollingMoments<T> {
     pub fn new(period: usize) -> Self {
         Self {
             period,
-            buf: RingBuffer::new(period),
+            buf: Deque::new(period),
             value: None,
             popped: None,
             ddof: false,
@@ -174,7 +174,7 @@ impl<T: Float + Default> RollingMoments<T> {
     #[inline]
     pub fn next(&mut self, value: T) -> &mut Self {
         self.value = Some(value);
-        self.popped = self.buf.push(value);
+        self.popped = self.buf.push_back(value);
         if let Some(popped) = self.popped {
             self.sum -= popped;
             self.sum_sq -= popped * popped;
@@ -264,12 +264,6 @@ impl<T: Float + Default> RollingMoments<T> {
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.buf.iter()
-    }
-
-    /// Returns a slice of the elements in the buffer
-    #[inline]
-    pub fn as_slice(&self) -> &[T] {
-        self.buf.as_slice()
     }
 
     /// Returns the sum of all values in the rolling window

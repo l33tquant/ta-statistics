@@ -80,7 +80,10 @@ stats.next((105.43, 23.67)).corr();
 - Uses KahanBabuskaNeumaier algorithm for compensated summation to prevent catastrophic cancellation in floating-point operations, ensuring numerical stability in rolling calculations
 - Min and max are optimized with O(1) lookup and amortized O(1) insertion time using monotonic queue data structure
 - Mode is optimized with O(1) lookup and amortized O(1) insertion time using frequency bucket data structure
-- Median is optimized with O(log n) time complexity for insertions and deletions, and O(1) median access using two balanced heaps with lazy deletions
+- Quantiles (including median) are implemented using an RB-Tree (Red-Black Tree) data structure with O(log n) operations for insertions, deletions, and quantile queries
+- Median Absolute Deviation (MAD) has O(n) time complexity as it requires collecting and sorting all deviations
+- Mean Absolute Deviation uses O(n) time complexity to traverse the tree 
+- Both MADs could be optimized to O(log n) or amortized O(1) time complexity using additional data structures, with a trade-off of increased memory usage - this optimization might be implemented in future versions based on specific use cases
 
 ## Example: Real-time Volatility Analysis
 

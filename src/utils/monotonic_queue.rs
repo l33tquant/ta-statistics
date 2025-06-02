@@ -77,6 +77,11 @@ where
         }
     }
 
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.deque.capacity()
+    }
+
     /// Returns true if the queue has processed enough elements to fill the window
     ///
     /// # Returns
@@ -84,7 +89,7 @@ where
     /// * `bool` - True if the window is filled with elements
     #[inline]
     pub fn has_complete_window(&self) -> bool {
-        self.element_count >= self.deque.capacity()
+        self.element_count >= self.capacity()
     }
 
     /// Determines if a position is outside the current sliding window
@@ -102,8 +107,32 @@ where
             return false;
         }
 
-        let window_start = self.element_count - self.deque.capacity();
+        let window_start = self.element_count.saturating_sub(self.capacity());
         pos <= window_start
+    }
+
+    /// Removes expired elements from the front of the deque
+    #[inline]
+    fn remove_expired_elements(&mut self) {
+        while let Some(&(_, pos)) = self.deque.front() {
+            if self.is_position_outside_window(pos) {
+                self.deque.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Maintains monotonic property by removing dominated elements
+    #[inline]
+    fn maintain_monotonic_property(&mut self, value: T) {
+        while let Some(&(existing, _)) = self.deque.back() {
+            if O::should_remove(&existing, &value) {
+                self.deque.pop_back();
+            } else {
+                break;
+            }
+        }
     }
 
     /// Pushes a new value into the queue
@@ -113,26 +142,9 @@ where
     /// * `value` - The value to push into the queue
     #[inline]
     pub fn push(&mut self, value: T) {
-        if !self.deque.is_empty() {
-            if let Some(&(_, pos)) = self.deque.front() {
-                if self.is_position_outside_window(pos) {
-                    self.deque.pop_front();
-                }
-            }
-        }
-
-        while !self.deque.is_empty() {
-            if let Some(&(existing, _)) = self.deque.back() {
-                if O::should_remove(&existing, &value) {
-                    self.deque.pop_back();
-                } else {
-                    break;
-                }
-            }
-        }
-
+        self.remove_expired_elements();
+        self.maintain_monotonic_property(value);
         self.deque.push_back((value, self.element_count));
-
         self.element_count += 1;
     }
 
@@ -174,6 +186,19 @@ where
 #[allow(clippy::unwrap_used, clippy::all)]
 mod tests {
     use super::{Max, Min, MonotonicQueue};
+
+    #[test]
+    fn test_monotonic_queue_equal_values_handling() {
+        // Test that equal values are handled consistently
+        let mut mq = MonotonicQueue::<_, Min>::new(3);
+        mq.push(5);
+        mq.push(5);
+        mq.push(5);
+        assert_eq!(mq.front(), Some(5));
+
+        mq.push(4);
+        assert_eq!(mq.front(), Some(4)); // Should pick the newer equal value
+    }
 
     #[test]
     fn test_monotonic_queue_min_sliding_window() {

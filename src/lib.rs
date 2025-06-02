@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), no_std)]
 #![deny(
-    unsafe_code,
     unused_imports,
     unused_variables,
     unused_must_use,
