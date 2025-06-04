@@ -19,35 +19,35 @@ pub struct Minimum<T>(MonotonicQueue<T, Min>);
 
 impl<T: Default + Clone + Float> Minimum<T> {
     /// Creates a new Minimum instance with the specified period
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `period` - The size of the rolling window
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new Minimum instance
     pub fn new(period: usize) -> Self {
         Self(MonotonicQueue::new(period))
     }
 
     /// Pushes a new value into the rolling window
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `value` - The new value to be added to the rolling window
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// None if the window is not yet full, otherwise returns the minimum value
     pub fn push(&mut self, value: T) {
         self.0.push(value)
     }
 
     /// Returns the minimum value in the rolling window
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// None if the window is not yet full, otherwise returns the minimum value
     pub fn get(&self) -> Option<T> {
         self.0.front()
