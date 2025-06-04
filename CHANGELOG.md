@@ -1,4 +1,8 @@
-## v0.2.5 (Jun 2, 2025)
+## v0.2.6 (Jun 04, 2025)
+
+- Added public exports for `minimum` and `maximum` modules to provide direct access to efficient rolling window extrema calculations
+
+## v0.2.5 (Jun 02, 2025)
 
 - Implemented a Red-Black Tree data structure with minimal unsafe code to efficiently compute median, quantiles, and interquartile range (IQR) with O(log n) time complexity for insertions, deletions, and lookups. Refactored Median/Mean Absolute Deviation (MAD) calculation from slice-based approach to Red-Black Tree implementation with O(n) complexity
 - Minor refactoring and optimizations

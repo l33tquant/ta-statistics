@@ -5,8 +5,10 @@ use core::iter::Sum;
 
 use crate::{
     PairedStatistics,
+    maximum::Maximum,
+    minimum::Minimum,
     rolling::{RollingMode, RollingMoments},
-    utils::{Max, Min, MonotonicQueue, RbTree},
+    utils::RbTree,
 };
 
 /// A structure that computes various statistics over a fixed-size window of values.
@@ -24,9 +26,9 @@ pub struct SingleStatistics<T> {
     /// Rolling moments
     moments: RollingMoments<T>,
     /// Minimum
-    min: MonotonicQueue<T, Min>,
+    min: Minimum<T>,
     /// Maximum
-    max: MonotonicQueue<T, Max>,
+    max: Maximum<T>,
     /// Maximum drawdown
     max_drawdown: Option<T>,
     /// Mode
@@ -51,8 +53,8 @@ where
     pub fn new(period: usize) -> Self {
         Self {
             moments: RollingMoments::new(period),
-            min: MonotonicQueue::new(period),
-            max: MonotonicQueue::new(period),
+            min: Minimum::new(period),
+            max: Maximum::new(period),
             max_drawdown: None,
             mode: RollingMode::new(),
             rb_tree: RbTree::new(period),
@@ -412,7 +414,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-        self.min.front()
+        self.min.get()
     }
 
     /// Returns the maximum value in the rolling window
@@ -453,7 +455,7 @@ where
         if !self.moments.is_ready() {
             return None;
         }
-        self.max.front()
+        self.max.get()
     }
 
     /// Returns the mean absolute deviation of values in the rolling window

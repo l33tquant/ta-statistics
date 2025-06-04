@@ -25,3 +25,9 @@ pub use single_statistics::SingleStatistics;
 
 mod paired_statistics;
 pub use paired_statistics::PairedStatistics;
+
+mod minimum;
+pub use minimum::Minimum;
+
+mod maximum;
+pub use maximum::Maximum;
